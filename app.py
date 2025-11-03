@@ -12,11 +12,18 @@ app.secret_key = 'a_very_secret_key_for_hangman_game_123'
 
 MAX_LIVES = 6
 
-# EXTERNAL API ENDPOINT - Using a reliable, free random word API
-# Note: This API does NOT support filtering by genre. It returns ONE random English word.
-EXTERNAL_WORD_API_URL = "https://random-word-api.herokuapp.com/word?number=1"
+# --- NEW API CONFIGURATION ---
+# These values MUST be set as Environment Variables on Render!
+# X_RAPIDAPI_KEY: Your unique key from RapidAPI
+# X_RAPIDAPI_HOST: wordsapiv1.p.rapidapi.com
+RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
+RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
 
-# Hardcoded GENRE LIST: Keeping this for the UI, but the API fetch ignores the genre selection.
+# The endpoint used to find words related to a topic (the genre)
+EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
+
+
+# Hardcoded GENRE LIST: These will be used to query the API.
 GENRE_LIST = [
     "Animals", 
     "Sports", 
@@ -93,20 +100,51 @@ HANGMAN_STAGES = [
 
 # --- Game Logic Functions ---
 
-def fetch_word_from_api(genre=None): # Genre parameter is now IGNORED
-    """Fetches a random word (ignoring genre) from the external API."""
+def fetch_word_from_api(genre):
+    """
+    Fetches a random word related to the genre from WordsAPI.
+    Requires X_RAPIDAPI_KEY and X_RAPIDAPI_HOST environment variables.
+    """
+    # Fallback if API keys are not configured in the environment
+    if not RAPIDAPI_KEY:
+        print("Configuration Error: X_RAPIDAPI_KEY is missing. Using fallback word.")
+        # Choose a basic fallback based on genre
+        if genre == "Animals":
+            return "WOLF"
+        elif genre == "Sports":
+            return "GOAL"
+        elif genre == "Technology":
+            return "CODE"
+        else:
+            return "FALLBACK"
+
+    # API Headers for Authentication
+    headers = {
+        'x-rapidapi-key': RAPIDAPI_KEY,
+        'x-rapidapi-host': RAPIDAPI_HOST
+    }
+
+    # Parameters to search for a random word related to the genre (topic)
+    # 'rel_jja' looks for adjectives or nouns related to the topic
+    params = {
+        'lettersMax': 10, # Keep words short enough for Hangman
+        'hasDetails': 'frequency',
+        'random': 'true',
+        'rel_jja': genre 
+    }
+
     try:
-        # Simple API call that just requests one random word
-        response = requests.get(EXTERNAL_WORD_API_URL, timeout=10)
-        response.raise_for_status() # Raise exception for bad status codes (4xx or 5xx)
+        # 1. Request a random word related to the genre
+        response = requests.get(EXTERNAL_WORD_API_URL, headers=headers, params=params, timeout=10)
+        response.raise_for_status() # Raises an exception for 4xx or 5xx status codes
         
         data = response.json()
         
-        # This API returns a list, e.g., ["randomword"]
-        if data and isinstance(data, list) and data[0].isalpha():
-            return data[0].upper()
+        # 2. WordsAPI returns the word directly in the 'word' field.
+        if data and 'word' in data and data['word'].isalpha():
+            return data['word'].upper()
         else:
-            print(f"API Error: Received unexpected data format: {data}")
+            print(f"API Error: Received unexpected data or no word found for genre '{genre}'.")
             return None
 
     except requests.exceptions.RequestException as e:
@@ -115,30 +153,32 @@ def fetch_word_from_api(genre=None): # Genre parameter is now IGNORED
 
 
 def initialize_game(genre=None):
-    """Initializes or resets the game state in the session, fetching a word from the API."""
+    """Initializes or resets the game state in the session, fetching a genre-specific word."""
     
-    # 1. Determine the genre to use (still needs to be set for the UI/restart button)
+    # 1. Determine the genre to use
     if genre and genre in GENRE_LIST:
         target_genre = genre
     elif GENRE_LIST:
+        # Default to a random genre if starting fresh
         target_genre = random.choice(GENRE_LIST)
     else:
         session['message'] = "Error: No genres available! Cannot start game."
         return 
 
-    # 2. Fetch word from the external API (NOTE: fetch_word_from_api ignores the genre!)
-    selected_word = fetch_word_from_api()
+    # 2. Fetch word from the external API
+    # The genre is now passed to the API call!
+    selected_word = fetch_word_from_api(target_genre)
     
     if not selected_word:
-        session['message'] = f"Error: Could not fetch a word from the external service. Using fallback."
-        # Fallback word if API fails
-        selected_word = "FALLBACK" 
+        session['message'] = f"Error: Could not fetch a word from the API for '{target_genre}'. Using hardcoded fallback."
+        # Final fallback word if API call failed
+        selected_word = "API_FAIL" 
         
     # 3. Update Session State
     session['word'] = selected_word
     session['guessed_letters'] = [] 
     session['lives'] = MAX_LIVES
-    session['message'] = f"New Game! Genre: **{target_genre}** (Word is random). Guess a letter to start!"
+    session['message'] = f"New Game! Genre: **{target_genre}**. Guess a letter to start!"
     session['genre'] = target_genre
 
 
@@ -226,7 +266,7 @@ def hangman_game():
         is_game_over=is_game_over,
         hangman_art=HANGMAN_STAGES[lives_index],
         max_lives=MAX_LIVES,
-        genres=GENRE_LIST, # Uses the hardcoded list
+        genres=GENRE_LIST, 
         current_genre=session.get('genre')
     )
 
