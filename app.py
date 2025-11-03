@@ -19,7 +19,8 @@ MAX_LIVES = 6
 RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
 RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
 
-# The endpoint used to find words related to a topic (the genre)
+# The base endpoint for searching and fetching words.
+# We will append '?' and parameters later.
 EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
 
 
@@ -124,13 +125,14 @@ def fetch_word_from_api(genre):
         'x-rapidapi-host': RAPIDAPI_HOST
     }
 
-    # Parameters to search for a random word related to the genre (topic)
-    # 'rel_jja' looks for adjectives or nouns related to the topic
+    # --- CRITICAL CHANGE HERE ---
+    # We are explicitly adding 'random' and 'rel_jja' to ensure genre filtering works.
+    # WordsAPI uses 'rel_jja' to find words related to an adjective/noun (our genre).
     params = {
-        'lettersMax': 10, # Keep words short enough for Hangman
-        'hasDetails': 'frequency',
-        'random': 'true',
-        'rel_jja': genre 
+        'random': 'true', # Request a random word
+        'rel_jja': genre, # Filter by words related to the genre
+        'lettersMax': 10, # Keep words short
+        'hasDetails': 'frequency', # Include another filter to narrow down results
     }
 
     try:
@@ -144,7 +146,7 @@ def fetch_word_from_api(genre):
         if data and 'word' in data and data['word'].isalpha():
             return data['word'].upper()
         else:
-            print(f"API Error: Received unexpected data or no word found for genre '{genre}'.")
+            print(f"API Error: Received unexpected data or no word found for genre '{genre}'. Raw response: {data}")
             return None
 
     except requests.exceptions.RequestException as e:
