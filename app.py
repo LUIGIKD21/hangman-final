@@ -1,260 +1,216 @@
-import random
-import os
-import requests 
-from flask import Flask, render_template, request, redirect, url_for, session
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Hangman - Genre Edition</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto+Mono&display=swap');
 
-# --- Configuration and Data ---
-app = Flask(__name__)
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 20px;
+        }
 
-# IMPORTANT: NEVER use this default key in production. Use a Render Environment Variable instead.
-# For deployment, remove this line and set SECRET_KEY in Render's dashboard.
-app.secret_key = 'a_very_secret_key_for_hangman_game_123' 
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+        }
 
-MAX_LIVES = 6
-
-# --- NEW API CONFIGURATION ---
-# These values MUST be set as Environment Variables on Render!
-# X_RAPIDAPI_KEY: Your unique key from RapidAPI
-# X_RAPIDAPI_HOST: wordsapiv1.p.rapidapi.com
-RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
-RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
-
-# The base endpoint for searching and fetching words.
-# We will append '?' and parameters later.
-EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
-
-
-# Hardcoded GENRE LIST: These will be used to query the API.
-GENRE_LIST = [
-    "Animals", 
-    "Sports", 
-    "Technology"
-]
-
-
-# Simplified ASCII art for the Hangman stages (0 to 6 misses)
-HANGMAN_STAGES = [
-    """
-  +---+
-  |   |
-      |
-      |
-      |
-      |
-=========""",
-    """
-  +---+
-  |   |
-  O   |
-      |
-      |
-      |
-=========""",
-    """
-  +---+
-  |   |
-  O   |
-  |   |
-      |
-      |
-=========""",
-    """
-  +---+
-  |   |
-  O   |
- /|   |
-      |
-      |
-=========""",
-    """
-  +---+
-  |   |
-  O   |
- /|\\  |
-      |
-      |
-=========""",
-    """
-  +---+
-  |   |
-  O   |
- /|\\  |
- /    |
-      |
-=========""",
-    """
-  +---+
-  |   |
-  O   |
- /|\\  |
- / \\  |
-      |
-========="""
-]
-
-# --- Helper Functions ---
-
-def get_word_from_api(genre):
-    """Fetches a random word based on the genre using the WordsAPI."""
-    # Note: WordsAPI uses 'topic' for genre/subject. We limit to 5-10 letters.
-    # The API query uses: hasDetails=typeOf, topic=... , lettersMin=5, lettersMax=10
-    
-    params = {
-        'random': 'true',
-        'hasDetails': 'typeOf',
-        'lettersMin': 5,
-        'lettersMax': 10,
-        'topic': genre.lower(),
-    }
-    
-    headers = {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST
-    }
-    
-    # Use the base URL for random word search
-    url = "https://wordsapiv1.p.rapidapi.com/words/"
-
-    try:
-        response = requests.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+        h1 {
+            color: #1a73e8;
+            margin-top: 0;
+            font-size: 2em;
+        }
         
-        # WordsAPI returns a word directly if random=true is used
-        word = data.get('word')
-        if word and word.isalpha():
-            return word.upper()
+        /* Auth Links and User Info */
+        .auth-bar {
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .auth-bar a {
+            color: #1a73e8;
+            text-decoration: none;
+            margin: 0 10px;
+            font-weight: 500;
+        }
+
+        /* Controls (Forms/Buttons) */
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap; /* Allows wrapping on mobile */
+        }
         
-        # Fallback if the API returns an unexpected structure or non-alpha word
-        return random.choice(["PYTHON", "FLASK", "DEVELOPER"]) # Safe defaults
+        input[type="text"], select { 
+            padding: 10px; 
+            font-size: 1em; 
+            border: 1px solid #ccc; 
+            border-radius: 6px; 
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus, select:focus {
+            border-color: #1a73e8;
+            outline: none;
+        }
         
-    except requests.exceptions.RequestException as e:
-        print(f"API Error: {e}")
-        # Return a safe, hardcoded word on API failure
-        return random.choice(["JINJA", "RENDER", "APIFAIL"])
+        .guess-input {
+            width: 50px; /* Small fixed width for single letter */
+            text-align: center;
+        }
 
-def get_display_word(word_to_guess, guessed_letters):
-    """Creates the display string (e.g., P_T_O_N)"""
-    display = ''
-    for letter in word_to_guess:
-        if letter in guessed_letters:
-            display += letter
-        else:
-            display += '_'
-    return ' '.join(display)
-
-# --- Flask Routes ---
-
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    word_to_guess = session.get('word_to_guess')
-    guessed_letters = session.get('guessed_letters', [])
-    lives = session.get('lives', MAX_LIVES)
-    message = session.get('message', "")
-    current_genre = session.get('current_genre', GENRE_LIST[0])
-    
-    guessed_set = set(guessed_letters)
-    is_game_over = False
-
-    # 1. Handle New Game Initialization (GET or Genre Change POST)
-    if request.method == 'GET' or 'genre_select' in request.form:
+        button, .button {
+            padding: 10px 15px;
+            font-size: 1em;
+            font-weight: bold;
+            color: #fff;
+            background-color: #4CAF50; /* Green for main action */
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none; /* For the 'a' tags styled as buttons */
+            display: inline-block;
+            transition: background-color 0.3s, transform 0.1s;
+        }
         
-        # If POST and genre is selected, update the genre
-        if 'genre_select' in request.form:
-            current_genre = request.form['genre_select']
+        button:hover, .button:hover {
+            background-color: #45a049;
+            transform: translateY(-1px);
+        }
         
-        session['current_genre'] = current_genre
+        /* Hangman Display */
+        .hangman-display { 
+            background: #2c3e50; 
+            color: #00ff00; 
+            padding: 15px; 
+            border-radius: 8px; 
+            overflow: auto; 
+            display: inline-block; 
+            text-align: left; 
+            font-family: 'Roboto Mono', monospace;
+            font-size: 1.1em;
+            margin: 20px 0;
+            white-space: pre; /* Essential for ASCII art */
+        }
+
+        h2 { 
+            font-size: 3em; 
+            letter-spacing: 15px; 
+            margin: 20px 0; 
+            color: #e74c3c; 
+            word-break: break-all; /* Ensures long words fit */
+        }
+
+        /* Messages and State Info */
+        #message { 
+            margin-top: 20px; 
+            font-weight: bold; 
+            min-height: 20px; 
+            font-size: 1.2em;
+        }
+        .win { color: #27ae60; }
+        .loss { color: #c0392b; }
+
+        .game-info {
+            padding: 10px 0;
+            border-top: 1px solid #eee;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+        }
+        .game-info p { 
+            margin: 5px 0; 
+            font-size: 0.9em;
+        }
+
+        .guessed-letters {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #ecf0f1;
+            border-radius: 6px;
+        }
+        .guessed-letters span {
+            font-weight: bold;
+            color: #2980b9;
+        }
+
+        /* Game Over Controls */
+        .game-over-controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .game-over-controls .secondary {
+            background-color: #3498db; /* Blue for 'Change Genre' */
+        }
+        .game-over-controls .secondary:hover {
+            background-color: #2980b9;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>API Hangman</h1>
         
-        # Fetch new word
-        new_word = get_word_from_api(current_genre)
+        <div class="game-info">
+            <p>Current Genre: **{{ current_genre }}**</p>
+            <p>Lives Remaining: **{{ lives }}/{{ max_lives }}**</p>
+        </div>
+
+        <!-- Genre Selection Form: Visible for starting a new game -->
+        <form method="POST" action="/" class="controls">
+            <label for="genre_select">Choose a Genre:</label>
+            <select name="genre_select" id="genre_select">
+                {% for genre in genres %}
+                    <option value="{{ genre }}" {% if genre == current_genre %}selected{% endif %}>
+                        {{ genre }}
+                    </option>
+                {% endfor %}
+            </select>
+            <button type="submit">Start New Game</button>
+        </form>
+
+        <pre class="hangman-display">{{ hangman_art }}</pre>
+
+        <h2>{{ display_word }}</h2>
         
-        # Reset game state
-        session['word_to_guess'] = new_word
-        session['guessed_letters'] = []
-        session['lives'] = MAX_LIVES
-        session['message'] = ""
-        word_to_guess = new_word
-        lives = MAX_LIVES
-        guessed_set = set()
-        
-        if request.method == 'POST':
-            # This is a POST for genre change, so we redirect to GET to clear form data
-            return redirect(url_for('index'))
+        <p id="message" class="{{ 'win' if 'WON' in message else ('loss' if 'OVER' in message else '') }}">{{ message | safe }}</p>
 
-    # 1.5. Handle Guess (POST only)
-    elif request.method == 'POST' and 'letter' in request.form:
-        if word_to_guess is None:
-            # Should not happen if game is initialized correctly, but as a safeguard
-            session['message'] = "Please select a genre and start a new game."
-            return redirect(url_for('index'))
-            
-        guess = request.form['letter'].upper()
-        
-        if len(guess) != 1 or not guess.isalpha():
-            session['message'] = "Please enter a single letter (A-Z)."
-            return redirect(url_for('index'))
-            
-        if guess in guessed_set:
-            session['message'] = f"You already guessed **{guess}**."
-        elif guess in word_to_guess:
-            guessed_set.add(guess)
-            session['message'] = f"Correct guess! **{guess}** is in the word."
-        else:
-            lives -= 1
-            session['lives'] = lives
-            guessed_set.add(guess)
-            session['message'] = f"Incorrect guess! **{guess}** is not in the word. You lost a life."
-            
-        # Convert the set back to a list before saving to the session
-        session['guessed_letters'] = list(guessed_set)
+        {% if not is_game_over %}
+            <!-- Guess Form: Visible only while the game is active -->
+            <form method="POST" action="/" class="controls">
+                <label for="letter">Guess Letter:</label>
+                <input type="text" id="letter" name="letter" maxlength="1" pattern="[a-zA-Z]" required autofocus class="guess-input">
+                <button type="submit">Guess</button>
+            </form>
+        {% else %}
+            <!-- Game Over Controls (Fixed) -->
+            <div class="game-over-controls">
+                <a href="{{ url_for('restart') }}" class="button">Play Again (Same Genre)</a>
+                <!-- This line was causing the error, now correctly pointing to the 'index' route -->
+                <a href="{{ url_for('index') }}" class="button secondary">Change Genre</a>
+            </div>
+        {% endif %}
 
-        # Re-fetch updated state for rendering after POST
-        lives = session.get('lives')
-    
-    # 2. Update display word and check for Win/Loss state
-    display_word = get_display_word(word_to_guess, guessed_set)
-    is_win = "_" not in display_word
-    is_loss = lives <= 0
-    
-    message = session.get('message', "")
-    
-    if is_win:
-        is_game_over = True
-        message = f"🎉 YOU WON! The word was **{word_to_guess}**."
-    elif is_loss:
-        is_game_over = True
-        message = f"💀 GAME OVER. The word was **{word_to_guess}**."
-
-    # 3. Render the template with the current state
-    lives_index = MAX_LIVES - lives
-    
-    return render_template(
-        'index.html',
-        display_word=display_word,
-        lives=lives,
-        message=message,
-        guessed_letters=sorted(list(guessed_set)), 
-        is_game_over=is_game_over,
-        hangman_art=HANGMAN_STAGES[lives_index],
-        max_lives=MAX_LIVES,
-        genres=GENRE_LIST,
-        current_genre=current_genre
-    )
-
-@app.route('/restart')
-def restart():
-    """Clears the game state from the session and redirects to the index page."""
-    # Preserve the genre so the user can play again with the same genre
-    current_genre = session.get('current_genre') 
-    
-    # Clear game-specific session data
-    session.pop('word_to_guess', None)
-    session.pop('guessed_letters', None)
-    session.pop('lives', None)
-    session.pop('message', None)
-    
-    # Redirect to the main game which will start a new game with the same genre
-    return redirect(url_for('index'))
-
-if __name__ == '__main__':
-    app.run(debug=True)
+        <div class="guessed-letters">
+            Guessed: <span>{{ guessed_letters | join(', ') if guessed_letters else 'None' }}</span>
+        </div>
+    </div>
+</body>
+</html>
