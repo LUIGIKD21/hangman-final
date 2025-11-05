@@ -123,12 +123,13 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        return check_password_hash(self.password_hash, password)
+        return check_password_hash(password, self.password_hash)
 
 class Game(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
-    wins = db.Column(db.Integer, default=0)
+    # Ensure these are 'wins' and 'losses' to match the code logic
+    wins = db.Column(db.Integer, default=0) 
     losses = db.Column(db.Integer, default=0)
 
     def total_games(self):
@@ -137,6 +138,20 @@ class Game(db.Model):
     def win_rate(self):
         total = self.total_games()
         return f"{(self.wins / total) * 100:.2f}%" if total > 0 else "0.00%"
+
+# --- Application Initialization Function ---
+
+def initialize_database():
+    """
+    Creates tables if they don't exist. This is called outside the
+    if __name__ == '__main__': block to ensure Gunicorn runs it.
+    """
+    with app.app_context():
+        # This will create tables if they don't exist.
+        db.create_all()
+
+# Call the initialization function immediately after defining models and db object
+initialize_database()
 
 # --- Helper Functions ---
 
@@ -156,8 +171,6 @@ def initialize_game_session(genre="Technology"):
 def fetch_random_word_by_genre(genre):
     """
     Fetches a random word related to the specified genre using WordsAPI.
-    
-    CRITICAL FIX: Uses the 'topic' parameter for filtering.
     """
     # Fallback to an easy word if API key is missing
     if not RAPIDAPI_KEY or not RAPIDAPI_HOST:
@@ -213,6 +226,7 @@ def update_user_stats(user_id, is_win):
     with app.app_context():
         game_stats = Game.query.filter_by(user_id=user_id).first()
         if not game_stats:
+            # Should not happen if registration is successful, but good safeguard
             game_stats = Game(user_id=user_id, wins=0, losses=0)
             db.session.add(game_stats)
         
@@ -225,8 +239,13 @@ def update_user_stats(user_id, is_win):
 
 def get_user_stats_data(user_id):
     """Fetches user stats and formats them for the template."""
+    # Note: user_id will be None if not logged in
+    if user_id is None:
+        return {'username': 'Guest', 'wins': 0, 'losses': 0, 'total_games': 0, 'win_rate': '0.00%'}
+
     with app.app_context():
-        user = User.query.get(user_id)
+        # Use .get() only if user_id is definitely an integer (which it should be from session)
+        user = User.query.get(user_id) 
         if user and user.game_stats:
             stats = user.game_stats
             return {
@@ -236,7 +255,8 @@ def get_user_stats_data(user_id):
                 'total_games': stats.total_games(),
                 'win_rate': stats.win_rate()
             }
-        return {'username': 'Guest', 'wins': 0, 'losses': 0, 'total_games': 0, 'win_rate': '0.00%'}
+        # Fallback if user is logged in but has no stats (or stats fetch failed)
+        return {'username': user.username if user else 'Guest', 'wins': 0, 'losses': 0, 'total_games': 0, 'win_rate': '0.00%'}
 
 # --- Routes ---
 
@@ -262,7 +282,10 @@ def hangman_game():
             guessed_set = set(session.get('guessed_letters', []))
             lives = session.get('lives')
             
-            if not guess.isalpha() or len(guess) != 1:
+            if not word_to_guess:
+                # Should not happen, but safe guard against no word
+                session['message'] = "Error: Word not loaded. Try restarting."
+            elif not guess.isalpha() or len(guess) != 1:
                 session['message'] = "🚨 Invalid input. Please enter a single letter (A-Z)."
             elif guess in guessed_set:
                 session['message'] = f"✅ You already guessed **{guess}**."
@@ -278,7 +301,7 @@ def hangman_game():
             session['guessed_letters'] = list(guessed_set)
 
     # 2. Ensure Session State Exists (First load or new user)
-    if 'word' not in session:
+    if 'word' not in session or session['word'] is None:
         # Get the word based on the stored genre (defaulting to Technology if not set)
         current_genre = session.get('genre', 'Technology')
         word_to_guess = fetch_random_word_by_genre(current_genre)
@@ -294,7 +317,7 @@ def hangman_game():
     word_to_guess = session.get('word').upper()
     guessed_set = set(session.get('guessed_letters', []))
     lives = session.get('lives')
-    is_game_over = session.get('is_game_over')
+    is_game_over = session.get('is_game_over', False) # Default to False if missing
     current_genre = session.get('genre')
     message = session.get('message', "")
     
@@ -407,9 +430,6 @@ def logout():
     return redirect(url_for('hangman_game'))
 
 # --- Main Run Block (For local testing only) ---
-# NOTE: The Render server will use gunicorn and ignore this block.
 if __name__ == '__main__':
-    with app.app_context():
-        # This will create tables if they don't exist
-        db.create_all()
+    # When running locally, the tables are already initialized by the function call above.
     app.run(debug=True)
