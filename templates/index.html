@@ -1,62 +1,116 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Flask Hangman</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hangman Game</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background-color: #f4f4f4; color: #333; }
-        .container { max-width: 600px; margin: 50px auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
-        h1 { color: #2c3e50; }
-        h2 { font-size: 2.5em; letter-spacing: 5px; margin: 20px 0; color: #e74c3c; }
-        pre { background: #333; color: #00ff00; padding: 10px; border-radius: 4px; overflow: auto; display: inline-block; text-align: left; font-size: 1.1em;}
-        #message { margin-top: 20px; font-weight: bold; min-height: 20px; }
-        .win { color: green; }
-        .loss { color: red; }
-        #game-info p { margin: 5px 0; }
-        form { margin-top: 20px; }
-        input[type="text"], select { padding: 10px; font-size: 1.2em; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; }
-        input[type="text"] { width: 60px; text-align: center; }
-        button, a { background-color: #3498db; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; font-size: 1em; }
-        button:hover, a:hover { background-color: #2980b9; }
-        #genre-selector { margin-bottom: 20px; padding: 10px; border: 1px dashed #ccc; border-radius: 5px;}
-        #genre-selector button { margin-left: 10px; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Roboto+Mono:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #e2e8f0; /* Gray-200 */
+        }
+        /* Custom styles for the game elements */
+        .game-card {
+            max-width: 600px;
+            margin: 50px auto;
+            background: #ffffff;
+            padding: 32px;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            text-align: center;
+        }
+        pre {
+            background: #1f2937; /* Gray-800 */
+            color: #10b981; /* Emerald-500 */
+            padding: 16px;
+            border-radius: 8px;
+            overflow: auto;
+            display: inline-block;
+            text-align: left;
+            font-size: 1.1em;
+            font-family: 'Roboto Mono', monospace;
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+        }
+        .win { color: #10b981; }
+        .loss { color: #ef4444; } /* Red-500 */
+        #lives { font-weight: 600; color: #4b5563; }
+        #guessed { font-style: italic; color: #6b7280; }
+        #display_word { 
+            font-size: 3rem; 
+            letter-spacing: 12px; 
+            margin: 20px 0; 
+            color: #1f2937; /* Gray-800 */
+            font-weight: 700;
+        }
     </style>
 </head>
-<body>
-    <div class="container">
-        <h1>Flask Hangman 💡</h1>
+<body class="min-h-screen">
+    
+    <!-- Navigation Bar -->
+    <header class="bg-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex justify-between items-center">
+            <a href="index.html" class="text-xl font-bold text-gray-900 hover:text-indigo-600 transition duration-150">
+                Hangman Game
+            </a>
+            <nav>
+                <!-- Login/Register links remain, but do not block game access -->
+                <a href="login.html" class="text-gray-600 hover:text-indigo-600 font-medium px-3 py-2 rounded-md transition duration-150">Login</a>
+                <a href="register.html" class="bg-indigo-600 text-white px-3 py-2 rounded-md font-medium hover:bg-indigo-700 transition duration-150 ml-3">Register</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Game Content (Always visible) -->
+    <div class="game-card">
+        <h1 class="text-3xl font-extrabold text-gray-900 mb-6">Play Hangman Now! 💡</h1>
         
-        <div id="genre-selector">
-            <form method="POST" action="/" id="genre-form">
-                <label for="genre_select">Choose a Genre:</label>
-                <select name="genre_select" id="genre_select">
+        <div id="genre-selector" class="mb-6 p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+            <!-- Note: Action is explicitly set to '/' -->
+            <form method="POST" action="/" id="genre-form" class="flex flex-col sm:flex-row justify-center items-center space-y-3 sm:space-y-0 sm:space-x-4">
+                <label for="genre_select" class="font-semibold text-indigo-700 whitespace-nowrap">Choose a Genre:</label>
+                <select name="genre_select" id="genre_select" class="px-3 py-2 border border-indigo-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
                     {% for genre in genres %}
                         <option value="{{ genre }}" {% if genre == current_genre %}selected{% endif %}>
                             {{ genre }}
                         </option>
                     {% endfor %}
                 </select>
-                <button type="submit">Start New Game</button>
+                <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 font-medium">
+                    Start New Game
+                </button>
             </form>
         </div>
         
         <pre>{{ hangman_art }}</pre>
 
-        <p id="lives">Lives Remaining: **{{ lives }}/{{ max_lives }}**</p>
-        <p id="guessed">Guessed Letters: {{ ', '.join(guessed_letters) if guessed_letters else 'None' }}</p>
+        <p id="lives" class="mt-4 text-lg">Lives Remaining: **{{ lives }}/{{ max_lives }}**</p>
+        <p id="guessed" class="text-base">Guessed Letters: {{ ', '.join(guessed_letters) if guessed_letters else 'None' }}</p>
 
-        <h2>{{ display_word }}</h2>
+        <h2 id="display_word">{{ display_word }}</h2>
         
-        <p id="message" class="{{ 'win' if 'WON' in message else ('loss' if 'OVER' in message else '') }}">{{ message | safe }}</p>
+        <p id="message" class="text-xl mt-4 min-h-[30px] {{ 'win' if 'WON' in message else ('loss' if 'OVER' in message else '') }}">{{ message | safe }}</p>
 
         {% if not is_game_over %}
-            <form method="POST" action="/">
-                <label for="letter">Guess Letter:</label>
-                <input type="text" id="letter" name="letter" maxlength="1" required autofocus>
-                <button type="submit">Guess</button>
+            <!-- Note: Action is explicitly set to '/' -->
+            <form method="POST" action="/" class="flex justify-center items-center mt-6 space-x-3">
+                <label for="letter" class="sr-only">Guess Letter:</label>
+                <input type="text" id="letter" name="letter" maxlength="1" required autofocus
+                       class="w-20 text-center px-4 py-3 border border-gray-300 rounded-lg shadow-sm text-2xl uppercase focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"
+                       placeholder="A">
+                <button type="submit" class="bg-green-600 text-white px-5 py-3 rounded-lg shadow-md hover:bg-green-700 transition duration-150 font-medium transform hover:scale-[1.05]">
+                    Guess
+                </button>
             </form>
         {% else %}
-            <a href="{{ url_for('restart') }}">Play Again (Genre: {{ current_genre }})</a>
+            <!-- Note: Uses Flask url_for for the restart route -->
+            <a href="{{ url_for('restart') }}" class="inline-block mt-6 bg-red-600 text-white px-6 py-3 rounded-lg shadow-md hover:bg-red-700 transition duration-150 font-medium transform hover:scale-[1.03]">
+                Play Again (Genre: {{ current_genre }})
+            </a>
         {% endif %}
     </div>
+
 </body>
 </html>

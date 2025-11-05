@@ -2,6 +2,7 @@ import random
 import os
 import requests 
 from flask import Flask, render_template, request, redirect, url_for, session
+from flask_sqlalchemy import SQLAlchemy
 
 # --- Configuration and Data ---
 app = Flask(__name__)
@@ -12,17 +13,32 @@ app.secret_key = 'a_very_secret_key_for_hangman_game_123'
 
 MAX_LIVES = 6
 
-# --- NEW API CONFIGURATION ---
-# These values MUST be set as Environment Variables on Render!
-# X_RAPIDAPI_KEY: Your unique key from RapidAPI
-# X_RAPIDAPI_HOST: wordsapiv1.p.rapidapi.com
+# --- DATABASE CONFIGURATION ---
+# The DATABASE_URL environment variable will be set by Render for the PostgreSQL service.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///users.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+# Define the User Model
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False) # Store plain text for now
+
+    def __repr__(self):
+        return f'<User {self.username}>'
+
+# Ensure tables are created when the app runs locally
+# In a deployment environment like Render, you might use a separate script or shell command for this.
+with app.app_context():
+    db.create_all()
+
+
+# --- API CONFIGURATION ---
 RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
 RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
-
-# The base endpoint for searching and fetching words.
-# We will append '?' and parameters later.
-EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
-
+EXTERNAL_WORD_API_URL = "https://wordsapiviv1.p.rapidapi.com/words/"
 
 # Hardcoded GENRE LIST: These will be used to query the API.
 GENRE_LIST = [
@@ -30,7 +46,6 @@ GENRE_LIST = [
     "Sports", 
     "Technology"
 ]
-
 
 # Simplified ASCII art for the Hangman stages (0 to 6 misses)
 HANGMAN_STAGES = [
@@ -99,140 +114,190 @@ HANGMAN_STAGES = [
     """
 ]
 
-# --- Game Logic Functions ---
+
+# --- Utility Functions ---
 
 def fetch_word_from_api(genre):
-    """
-    Fetches a random word related to the genre from WordsAPI.
-    Requires X_RAPIDAPI_KEY and X_RAPIDAPI_HOST environment variables.
-    """
-    # Fallback if API keys are not configured in the environment
+    """Fetches a random word based on a given genre using the external API."""
     if not RAPIDAPI_KEY:
-        print("Configuration Error: X_RAPIDAPI_KEY is missing. Using fallback word.")
-        # Choose a basic fallback based on genre
-        if genre == "Animals":
-            return "WOLF"
-        elif genre == "Sports":
-            return "GOAL"
-        elif genre == "Technology":
-            return "CODE"
-        else:
-            return "FALLBACK"
+        # Fallback if API key is not set
+        print("Warning: RAPIDAPI_KEY not set. Using fallback words.")
+        fallback_words = {
+            "Animals": ["LION", "TIGER", "BEAR", "ELEPHANT", "GIRAFFE"],
+            "Sports": ["SOCCER", "BASKETBALL", "FOOTBALL", "TENNIS", "HOCKEY"],
+            "Technology": ["COMPUTER", "ROBOTICS", "INTERNET", "PROGRAMMING", "SOFTWARE"]
+        }
+        return random.choice(fallback_words.get(genre, ["FLASK"]))
 
-    # API Headers for Authentication
+    # Prepare headers for the API call
     headers = {
-        'x-rapidapi-key': RAPIDAPI_KEY,
-        'x-rapidapi-host': RAPIDAPI_HOST
+        "x-rapidapi-key": RAPIDAPI_KEY,
+        "x-rapidapi-host": RAPIDAPI_HOST
     }
-
-    # --- CRITICAL CHANGE HERE ---
-    # We are explicitly adding 'random' and 'rel_jja' to ensure genre filtering works.
-    # WordsAPI uses 'rel_jja' to find words related to an adjective/noun (our genre).
-    params = {
-        'random': 'true', # Request a random word
-        'rel_jja': genre, # Filter by words related to the genre
-        'lettersMax': 10, # Keep words short
-        'hasDetails': 'frequency', # Include another filter to narrow down results
-    }
-
+    
+    # Construct query to search for words related to the genre
+    search_url = f"{EXTERNAL_WORD_API_URL}search?topics={genre.lower()}&letterPattern=^[a-z]{{5,10}}$&random=true&limit=1"
+    
     try:
-        # 1. Request a random word related to the genre
-        response = requests.get(EXTERNAL_WORD_API_URL, headers=headers, params=params, timeout=10)
-        response.raise_for_status() # Raises an exception for 4xx or 5xx status codes
-        
+        response = requests.get(search_url, headers=headers, timeout=5)
+        response.raise_for_status() 
         data = response.json()
         
-        # 2. WordsAPI returns the word directly in the 'word' field.
-        if data and 'word' in data and data['word'].isalpha():
-            return data['word'].upper()
-        else:
-            print(f"API Error: Received unexpected data or no word found for genre '{genre}'. Raw response: {data}")
-            return None
-
-    except requests.exceptions.RequestException as e:
-        print(f"API Connection Error: {e}")
-        return None
-
-
-def initialize_game(genre=None):
-    """Initializes or resets the game state in the session, fetching a genre-specific word."""
-    
-    # 1. Determine the genre to use
-    if genre and genre in GENRE_LIST:
-        target_genre = genre
-    elif GENRE_LIST:
-        # Default to a random genre if starting fresh
-        target_genre = random.choice(GENRE_LIST)
-    else:
-        session['message'] = "Error: No genres available! Cannot start game."
-        return 
-
-    # 2. Fetch word from the external API
-    # The genre is now passed to the API call!
-    selected_word = fetch_word_from_api(target_genre)
-    
-    if not selected_word:
-        session['message'] = f"Error: Could not fetch a word from the API for '{target_genre}'. Using hardcoded fallback."
-        # Final fallback word if API call failed
-        selected_word = "API_FAIL" 
+        if data and 'results' in data and len(data['results']) > 0:
+            return data['results'][0]['word'].upper()
         
-    # 3. Update Session State
-    session['word'] = selected_word
-    session['guessed_letters'] = [] 
-    session['lives'] = MAX_LIVES
-    session['message'] = f"New Game! Genre: **{target_genre}**. Guess a letter to start!"
-    session['genre'] = target_genre
+        print(f"API returned no word for genre: {genre}. Falling back.")
+        return "PYTHON" 
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching word from API: {e}. Falling back to default.")
+        return "GEMINI" 
 
 
-def get_display_word(secret_word, guessed_letters_set):
-    """Returns the word with unguessed letters as underscores."""
+def get_display_word(word, guessed_letters):
+    """Returns the word with unguessed letters replaced by underscores."""
     display = ""
-    for letter in secret_word:
-        if letter in guessed_letters_set:
+    for letter in word:
+        if letter in guessed_letters:
             display += letter + " "
         else:
             display += "_ "
     return display.strip()
 
-# --- Flask Routes ---
+
+def initialize_game(genre):
+    """Initializes a new game session."""
+    word = fetch_word_from_api(genre)
+    session['word'] = word
+    session['guessed_letters'] = []
+    session['lives'] = MAX_LIVES
+    session['message'] = "Start guessing letters!"
+    session['genre'] = genre
+    session['is_game_over'] = False
+    
+    if not word.isalpha():
+        initialize_game(genre) 
+    
+    print(f"New game started with word: {word}") 
+    return word
+
+# --- Authentication Routes (UPDATED TO USE DB) ---
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """Handles user registration."""
+    # We rely on the static register.html file for GET
+    if request.method == 'GET':
+        return redirect(url_for('index')) # If user lands here directly, redirect to game
+
+    # Handle POST
+    username = request.form.get('username')
+    password = request.form.get('password')
+
+    if not username or not password:
+        # Assuming you'll add error handling to register.html later
+        return render_template('register.html', error="Both username and password are required.")
+    
+    # Check if user already exists
+    existing_user = User.query.filter_by(username=username).first()
+    if existing_user:
+        return render_template('register.html', error="Username already exists. Please choose another.")
+
+    # Create new user and commit to DB
+    new_user = User(username=username, password=password)
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        print(f"New user registered: {username}")
+        session['message'] = f"Account created for {username}. Please log in."
+        return redirect(url_for('login')) 
+    except Exception as e:
+        db.session.rollback()
+        print(f"Database error during registration: {e}")
+        return render_template('register.html', error="An error occurred during registration.")
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Handles user login."""
+    # We rely on the static login.html file for GET
+    if request.method == 'GET':
+        # If the user is already in the session, go to game
+        if session.get('username'):
+             return redirect(url_for('index'))
+        return redirect(url_for('index')) # If user lands here directly, redirect to game
+
+    # Handle POST
+    username = request.form.get('username')
+    password = request.form.get('password')
+
+    if not username or not password:
+        return render_template('login.html', error="Both username and password are required.")
+
+    # Check credentials against the database
+    user = User.query.filter_by(username=username).first()
+    
+    # Check if user exists and password matches (simple plain-text comparison)
+    if user and user.password == password:
+        session['username'] = username
+        session['message'] = f"Welcome, {username}! Start playing."
+        return redirect(url_for('index')) 
+    else:
+        return render_template('login.html', error="Invalid username or password.")
+
+
+@app.route('/logout')
+def logout():
+    """Handles user logout."""
+    session.pop('username', None)
+    session['message'] = "You have been logged out."
+    return redirect(url_for('index'))
+
+
+# --- Game Routes ---
 
 @app.route('/', methods=['GET', 'POST'])
-def hangman_game():
-    
-    # Check if the user is trying to START a new game with a genre selection
-    if request.method == 'POST' and 'genre_select' in request.form:
-        selected_genre = request.form['genre_select']
-        initialize_game(genre=selected_genre)
-        return redirect(url_for('hangman_game'))
-
-    # Initialize game if not already in session (first load)
-    if 'word' not in session:
-        initialize_game()
-
+def index():
+    """Handles the main game logic and rendering."""
+    # 1. Check for current session state
     word_to_guess = session.get('word')
+    guessed_letters = session.get('guessed_letters', [])
     lives = session.get('lives')
-    
-    # Retrieve the list from the session, and immediately convert it to a set for efficient logic
-    guessed_set = set(session.get('guessed_letters', []))
-    
-    is_game_over = False
+    current_genre = session.get('genre', GENRE_LIST[0])
+    is_game_over = session.get('is_game_over', False)
+    username = session.get('username', None) # Get username for template
 
-    # 1. Handle Letter Guess (POST)
-    if request.method == 'POST' and 'letter' in request.form:
-        guess = request.form.get('letter', '').strip().upper()
+    # Set up the guessed set for quick lookups
+    guessed_set = set(guessed_letters)
+    
+    # If no word in session, start a new game
+    if not word_to_guess:
+        word_to_guess = initialize_game(current_genre)
+        guessed_set = set() # Reset set after initialization
+
+    # 1.1 Handle Genre Change (POST from genre-form)
+    if request.method == 'POST' and 'genre_select' in request.form:
+        new_genre = request.form['genre_select']
+        word_to_guess = initialize_game(new_genre)
+        guessed_set = set()
+        is_game_over = False
+        lives = MAX_LIVES
+
+    # 1.2 Handle Letter Guess (POST from guess form)
+    elif request.method == 'POST' and 'letter' in request.form and not is_game_over:
+        letter = request.form['letter'].upper()
         session['message'] = "" # Clear previous message
 
-        if len(guess) == 1 and guess.isalpha():
-            if guess in guessed_set:
-                session['message'] = f"You already guessed '{guess}'. Try a new letter."
+        if len(letter) == 1 and letter.isalpha():
+            if letter in guessed_set:
+                session['message'] = f"You already guessed **{letter}**."
             else:
-                guessed_set.add(guess)
-                
-                if guess not in word_to_guess:
-                    session['lives'] -= 1
-                    session['message'] = f"'{guess}' is NOT in the word. Lives left: {session['lives']}."
+                guessed_set.add(letter)
+                if letter not in word_to_guess:
+                    session['lives'] = lives - 1
+                    session['message'] = f"Wrong guess! **{letter}** is not in the word."
                 else:
-                    session['message'] = f"Good guess! '{guess}' is in the word."
+                    session['message'] = f"Correct! **{letter}** is in the word."
         else:
             session['message'] = "Invalid input. Please enter a single letter (A-Z)."
 
@@ -251,9 +316,11 @@ def hangman_game():
     
     if is_win:
         is_game_over = True
+        session['is_game_over'] = True
         message = f"🎉 YOU WON! The word was **{word_to_guess}**."
     elif is_loss:
         is_game_over = True
+        session['is_game_over'] = True
         message = f"💀 GAME OVER. The word was **{word_to_guess}**."
 
     # 3. Render the template with the current state
@@ -269,16 +336,30 @@ def hangman_game():
         hangman_art=HANGMAN_STAGES[lives_index],
         max_lives=MAX_LIVES,
         genres=GENRE_LIST, 
-        current_genre=session.get('genre')
+        current_genre=session.get('genre'),
+        # Pass username to the template for display in the navigation bar
+        username=username
     )
 
 @app.route('/restart')
 def restart():
-    """Route to restart the game, defaulting to the current genre."""
-    initialize_game(genre=session.get('genre'))
-    return redirect(url_for('hangman_game'))
+    """Clears the session and redirects to start a new game."""
+    current_genre = session.get('genre', GENRE_LIST[0])
+    username = session.get('username')
+    
+    session.pop('word', None)
+    session.pop('guessed_letters', None)
+    session.pop('lives', None)
+    session.pop('is_game_over', None)
+    
+    if current_genre:
+        session['genre'] = current_genre
+    if username:
+        session['username'] = username
 
-# --- Execution ---
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
+    if not RAPIDAPI_KEY:
+        os.environ['X_RAPIDAPI_KEY'] = 'DEMO_KEY'
     app.run(debug=True)
