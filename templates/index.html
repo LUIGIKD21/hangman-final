@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API Hangman - Genre Edition</title>
+    <title>Hangman - Genre Edition</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto+Mono&display=swap');
 
@@ -35,146 +35,225 @@
         
         /* Auth Links and User Info */
         .auth-bar {
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #eee;
-        }
-        .auth-bar a {
-            color: #1a73e8;
-            text-decoration: none;
-            margin: 0 10px;
-            font-weight: 500;
-        }
-
-        /* Controls (Forms/Buttons) */
-        .controls {
             display: flex;
-            justify-content: center;
-            align-items: center;
+            justify-content: flex-end;
             gap: 10px;
             margin-bottom: 20px;
-            flex-wrap: wrap; /* Allows wrapping on mobile */
+            font-size: 0.9em;
         }
-        
-        input[type="text"], select { 
-            padding: 10px; 
-            font-size: 1em; 
-            border: 1px solid #ccc; 
-            border-radius: 6px; 
-            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
-            transition: border-color 0.3s;
-        }
-        input[type="text"]:focus, select:focus {
-            border-color: #1a73e8;
-            outline: none;
-        }
-        
-        .guess-input {
-            width: 50px; /* Small fixed width for single letter */
-            text-align: center;
-        }
-
-        button, .button {
-            padding: 10px 15px;
-            font-size: 1em;
+        .auth-bar a, .auth-bar span {
+            color: #1a73e8;
+            text-decoration: none;
             font-weight: bold;
-            color: #fff;
-            background-color: #4CAF50; /* Green for main action */
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            text-decoration: none; /* For the 'a' tags styled as buttons */
-            display: inline-block;
-            transition: background-color 0.3s, transform 0.1s;
         }
-        
-        button:hover, .button:hover {
-            background-color: #45a049;
-            transform: translateY(-1px);
+        .auth-bar a:hover {
+            text-decoration: underline;
         }
-        
-        /* Hangman Display */
-        .hangman-display { 
-            background: #2c3e50; 
-            color: #00ff00; 
-            padding: 15px; 
-            border-radius: 8px; 
-            overflow: auto; 
-            display: inline-block; 
-            text-align: left; 
+
+        .user-stats {
+            background-color: #e8f0fe;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 20px;
+            text-align: left;
+            border: 1px solid #1a73e8;
+        }
+        .user-stats p {
+            margin: 5px 0;
+        }
+        .user-stats strong {
+            float: right;
+            font-weight: 700;
+        }
+
+        .hangman-display {
             font-family: 'Roboto Mono', monospace;
-            font-size: 1.1em;
+            white-space: pre;
+            background-color: #e8f0fe;
+            border: 1px solid #dcdcdc;
+            padding: 15px;
             margin: 20px 0;
-            white-space: pre; /* Essential for ASCII art */
+            border-radius: 8px;
+            text-align: left;
+            font-size: 1.1em;
+            color: #333;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+            min-height: 200px; 
+            overflow-x: auto;
         }
 
-        h2 { 
-            font-size: 3em; 
-            letter-spacing: 15px; 
-            margin: 20px 0; 
-            color: #e74c3c; 
-            word-break: break-all; /* Ensures long words fit */
+        h2 {
+            font-size: 3em;
+            margin: 15px 0 20px 0;
+            letter-spacing: 5px;
+            color: #333;
         }
 
-        /* Messages and State Info */
-        #message { 
-            margin-top: 20px; 
-            font-weight: bold; 
-            min-height: 20px; 
-            font-size: 1.2em;
+        #message {
+            font-weight: bold;
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 6px;
         }
-        .win { color: #27ae60; }
-        .loss { color: #c0392b; }
 
-        .game-info {
-            padding: 10px 0;
-            border-top: 1px solid #eee;
-            border-bottom: 1px solid #eee;
+        #message.win {
+            background-color: #e6ffed;
+            color: #1e8449;
+            border: 1px solid #c8e6c9;
+        }
+
+        #message.loss {
+            background-color: #fee;
+            color: #d93025;
+            border: 1px solid #fcc;
+        }
+
+        /* Forms and Controls */
+        form, .controls, .game-over-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
             margin-bottom: 20px;
         }
-        .game-info p { 
-            margin: 5px 0; 
-            font-size: 0.9em;
+        
+        select, input[type="text"], input[type="password"], button, a.button {
+            padding: 10px 15px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            font-size: 1em;
+            transition: all 0.2s ease;
+        }
+        
+        input[type="text"], input[type="password"] {
+            flex-grow: 1;
+            width: auto;
+        }
+
+        select {
+            flex-grow: 1;
+        }
+
+        .guess-input { /* Specific class for the single-letter guess input */
+            width: 50px;
+            text-align: center;
+            text-transform: uppercase;
+            flex-grow: 0;
+        }
+
+        button, a.button {
+            cursor: pointer;
+            background-color: #1a73e8;
+            color: white;
+            font-weight: bold;
+            text-decoration: none;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        button:hover, a.button:hover {
+            background-color: #1669c5;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+        }
+        
+        a.button.secondary {
+            background-color: #f2f2f2;
+            color: #333;
+            border: 1px solid #ccc;
+        }
+        a.button.secondary:hover {
+            background-color: #e0e0e0;
+        }
+
+        a.button {
+            display: inline-block;
+            margin-top: 10px;
+            width: auto;
+        }
+        
+        .game-over-controls {
+            margin-top: 15px;
+            flex-direction: row; /* Ensure buttons stay in a row */
         }
 
         .guessed-letters {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #ecf0f1;
-            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 1.1em;
+            color: #555;
         }
         .guessed-letters span {
             font-weight: bold;
-            color: #2980b9;
+            color: #d93025;
+            letter-spacing: 2px;
         }
-
-        /* Game Over Controls */
-        .game-over-controls {
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-            margin-top: 20px;
+        
+        .genre-info {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
         }
-        .game-over-controls .secondary {
-            background-color: #3498db; /* Blue for 'Change Genre' */
+        
+        /* Responsive adjustments */
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+            h2 {
+                font-size: 2.5em;
+            }
+            form, .controls, .game-over-controls {
+                flex-direction: column;
+                gap: 15px;
+            }
+            select, input[type="text"], input[type="password"], button, a.button {
+                width: 100%;
+                max-width: 300px;
+            }
+            .guess-input {
+                width: 100%;
+                max-width: 50px;
+            }
+            .game-over-controls {
+                flex-direction: column; /* Allow buttons to stack on mobile */
+            }
         }
-        .game-over-controls .secondary:hover {
-            background-color: #2980b9;
-        }
-
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>API Hangman</h1>
         
-        <div class="game-info">
-            <p>Current Genre: **{{ current_genre }}**</p>
-            <p>Lives Remaining: **{{ lives }}/{{ max_lives }}**</p>
+        <!-- Auth Bar: Shows Login/Register or Username/Logout -->
+        <div class="auth-bar">
+            {% if is_logged_in %}
+                <!-- Display username and logout link -->
+                <span>Welcome, {{ user_stats.username }}!</span>
+                <a href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+                <!-- Display login and register links -->
+                <a href="{{ url_for('login') }}">Login</a> 
+                <a href="{{ url_for('register') }}">Register</a>
+            {% endif %}
         </div>
 
-        <!-- Genre Selection Form: Visible for starting a new game -->
-        <form method="POST" action="/" class="controls">
+        <h1>Hangman</h1>
+
+        <!-- User Stats Box: Only visible if logged in -->
+        {% if is_logged_in %}
+            <div class="user-stats">
+                <p>Total Games: <strong>{{ user_stats.total_games }}</strong></p>
+                <p>Wins: <strong>{{ user_stats.wins }}</strong></p>
+                <p>Losses: <strong>{{ user_stats.losses }}</strong></p>
+                <p>Win Rate: <strong>{{ user_stats.win_rate }}</strong></p>
+            </div>
+        {% endif %}
+        
+        <div class="genre-info">
+            <p>Current Genre: <strong>{{ current_genre }}</strong></p>
+            <p>Lives Remaining: <strong>{{ lives }} / {{ max_lives }}</strong></p>
+        </div>
+
+        <!-- Genre Selection Form (Triggers New Game) -->
+        <form method="POST" action="{{ url_for('hangman_game') }}" class="controls">
             <label for="genre_select">Choose a Genre:</label>
             <select name="genre_select" id="genre_select">
                 {% for genre in genres %}
@@ -194,17 +273,18 @@
 
         {% if not is_game_over %}
             <!-- Guess Form: Visible only while the game is active -->
-            <form method="POST" action="/" class="controls">
+            <form method="POST" action="{{ url_for('hangman_game') }}" class="controls">
                 <label for="letter">Guess Letter:</label>
+                <!-- NOTE: Input uses the 'hangman_game' route for processing the guess -->
                 <input type="text" id="letter" name="letter" maxlength="1" pattern="[a-zA-Z]" required autofocus class="guess-input">
                 <button type="submit">Guess</button>
             </form>
         {% else %}
-            <!-- Game Over Controls (Fixed) -->
+            <!-- Game Over Controls -->
             <div class="game-over-controls">
                 <a href="{{ url_for('restart') }}" class="button">Play Again (Same Genre)</a>
-                <!-- This line was causing the error, now correctly pointing to the 'index' route -->
-                <a href="{{ url_for('index') }}" class="button secondary">Change Genre</a>
+                <!-- Link to main game page to allow genre selection -->
+                <a href="{{ url_for('hangman_game') }}" class="button secondary">Change Genre</a>
             </div>
         {% endif %}
 

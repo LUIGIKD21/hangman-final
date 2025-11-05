@@ -3,3 +3,4 @@ gunicorn
 requests
 Flask-SQLAlchemy
 psycopg2-binary
+Flask-Migrate
