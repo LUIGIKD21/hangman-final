@@ -41,8 +41,7 @@ HANGMAN_STAGES = [
       |
       |
       |
-=========
-""", 
+=========""",
     """
   +---+
   |   |
@@ -50,8 +49,7 @@ HANGMAN_STAGES = [
       |
       |
       |
-=========
-""", 
+=========""",
     """
   +---+
   |   |
@@ -59,8 +57,7 @@ HANGMAN_STAGES = [
   |   |
       |
       |
-=========
-""", 
+=========""",
     """
   +---+
   |   |
@@ -68,56 +65,46 @@ HANGMAN_STAGES = [
  /|   |
       |
       |
-=========
-""", 
+=========""",
     """
   +---+
   |   |
   O   |
- /|\  |
+ /|\\  |
       |
       |
-=========
-""", 
+=========""",
     """
   +---+
   |   |
   O   |
- /|\  |
+ /|\\  |
  /    |
       |
-=========
-""", 
+=========""",
     """
   +---+
   |   |
   O   |
- /|\  |
- / \  |
+ /|\\  |
+ / \\  |
       |
-=========
-"""
+========="""
 ]
 
+# --- Helper Functions ---
 
 def get_word_from_api(genre):
-    """
-    Fetches a random word based on a given genre/topic using the WordsAPI.
-    Uses exponential backoff for resilience against transient network errors.
+    """Fetches a random word based on the genre using the WordsAPI."""
+    # Note: WordsAPI uses 'topic' for genre/subject. We limit to 5-10 letters.
+    # The API query uses: hasDetails=typeOf, topic=... , lettersMin=5, lettersMax=10
     
-    This function demonstrates how to call an external API with authentication headers.
-    """
-    
-    # Mapping genres to API tags (words with definition topic)
-    # The API query uses the 'topic' constraint.
-    topic = genre.lower() 
-    
-    querystring = {
-        "random": "true",
-        "hasDetails": "definitions", # Ensure it has definitions to filter for topics
-        "limit": "1",
-        "letterPattern": "^[a-zA-Z]{5,10}$", # Filter for 5-10 letters to make the game fun
-        "includeDefinition": "true"
+    params = {
+        'random': 'true',
+        'hasDetails': 'typeOf',
+        'lettersMin': 5,
+        'lettersMax': 10,
+        'topic': genre.lower(),
     }
     
     headers = {
@@ -125,123 +112,99 @@ def get_word_from_api(genre):
         "x-rapidapi-host": RAPIDAPI_HOST
     }
     
-    max_retries = 3
-    base_delay = 1
-    
-    for attempt in range(max_retries):
-        try:
-            # We use the /words/ endpoint for random words with constraints
-            response = requests.get(EXTERNAL_WORD_API_URL, headers=headers, params=querystring)
-            response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
-            
-            data = response.json()
-            
-            # The API returns a dictionary with 'word' and 'results' list
-            word = data.get('word', '').upper()
-            
-            # Simple check to ensure the word is valid and contains only letters
-            if word and word.isalpha():
-                # Check if the word definition includes the topic (approximate genre match)
-                results = data.get('results', [])
-                for result in results:
-                    if topic in result.get('partOfSpeech', '').lower() or \
-                       topic in result.get('definition', '').lower() or \
-                       topic in result.get('topic', '').lower() or \
-                       topic in ' '.join(result.get('synonyms', [])).lower():
-                        return word
-                
-                # Fallback: if topic filtering is too strict, just return the random word found
-                return word 
+    # Use the base URL for random word search
+    url = "https://wordsapiv1.p.rapidapi.com/words/"
 
-            print(f"API returned an invalid word: {data}")
-            return None
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        # WordsAPI returns a word directly if random=true is used
+        word = data.get('word')
+        if word and word.isalpha():
+            return word.upper()
+        
+        # Fallback if the API returns an unexpected structure or non-alpha word
+        return random.choice(["PYTHON", "FLASK", "DEVELOPER"]) # Safe defaults
+        
+    except requests.exceptions.RequestException as e:
+        print(f"API Error: {e}")
+        # Return a safe, hardcoded word on API failure
+        return random.choice(["JINJA", "RENDER", "APIFAIL"])
 
-        except requests.exceptions.RequestException as e:
-            print(f"API request failed on attempt {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                import time
-                delay = base_delay * (2 ** attempt)
-                print(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-            else:
-                print("Max retries reached. Using fallback word.")
-                break
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            break
-            
-    # Fallback if API fails: pick a hardcoded word (only if API Key is missing or failed)
-    fallback_words = {
-        "animals": "ELEPHANT", "sports": "SOCCER", "technology": "PYTHON"
-    }
-    return fallback_words.get(topic, "GEMINI")
-
-
-def get_display_word(word, guessed_letters):
-    """Returns the word with unguessed letters replaced by underscores."""
-    display = ""
-    for letter in word:
+def get_display_word(word_to_guess, guessed_letters):
+    """Creates the display string (e.g., P_T_O_N)"""
+    display = ''
+    for letter in word_to_guess:
         if letter in guessed_letters:
-            display += letter + " "
+            display += letter
         else:
-            display += "_ "
-    return display.strip()
+            display += '_'
+    return ' '.join(display)
 
-def initialize_game(genre):
-    """Initializes a new game session."""
-    word_to_guess = get_word_from_api(genre)
-    
-    session.clear()
-    session['word'] = word_to_guess
-    session['guessed_letters'] = []
-    session['lives'] = MAX_LIVES
-    session['current_genre'] = genre
-    session['message'] = f"New game started! Guess the {genre} word."
-    
-    print(f"New word to guess: {word_to_guess} (Genre: {genre})")
+# --- Flask Routes ---
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    """
-    Main route for displaying the game state and handling user input.
-    Handles both letter guesses and genre selection/new game starts.
-    """
-    
-    # Check if a new game needs to be initialized (either no word in session or genre change)
-    if 'word' not in session or request.form.get('genre_select'):
-        genre = request.form.get('genre_select') or GENRE_LIST[0]
-        initialize_game(genre)
-
-    # State variables from session
-    word_to_guess = session.get('word').upper()
-    lives = session.get('lives')
+    word_to_guess = session.get('word_to_guess')
     guessed_letters = session.get('guessed_letters', [])
-    current_genre = session.get('current_genre')
-    is_game_over = False
+    lives = session.get('lives', MAX_LIVES)
+    message = session.get('message', "")
+    current_genre = session.get('current_genre', GENRE_LIST[0])
     
-    # Convert list of guessed letters to a set for efficient lookup
     guessed_set = set(guessed_letters)
+    is_game_over = False
 
-    # 1. Handle POST requests (Letter Guess or Genre Change)
-    if request.method == 'POST':
-        letter = request.form.get('letter', '').upper()
+    # 1. Handle New Game Initialization (GET or Genre Change POST)
+    if request.method == 'GET' or 'genre_select' in request.form:
         
-        # --- Handle Letter Guess Input ---
-        if letter and letter.isalpha() and len(letter) == 1 and not is_game_over:
+        # If POST and genre is selected, update the genre
+        if 'genre_select' in request.form:
+            current_genre = request.form['genre_select']
+        
+        session['current_genre'] = current_genre
+        
+        # Fetch new word
+        new_word = get_word_from_api(current_genre)
+        
+        # Reset game state
+        session['word_to_guess'] = new_word
+        session['guessed_letters'] = []
+        session['lives'] = MAX_LIVES
+        session['message'] = ""
+        word_to_guess = new_word
+        lives = MAX_LIVES
+        guessed_set = set()
+        
+        if request.method == 'POST':
+            # This is a POST for genre change, so we redirect to GET to clear form data
+            return redirect(url_for('index'))
+
+    # 1.5. Handle Guess (POST only)
+    elif request.method == 'POST' and 'letter' in request.form:
+        if word_to_guess is None:
+            # Should not happen if game is initialized correctly, but as a safeguard
+            session['message'] = "Please select a genre and start a new game."
+            return redirect(url_for('index'))
             
-            if letter in guessed_set:
-                session['message'] = f"**{letter}** already guessed. Try again!"
-            elif letter in word_to_guess:
-                guessed_set.add(letter)
-                session['message'] = f"Correct guess: **{letter}**!"
-            else:
-                guessed_set.add(letter)
-                session['lives'] = lives - 1
-                session['message'] = f"Incorrect guess. **{letter}** is not in the word."
+        guess = request.form['letter'].upper()
         
-        elif letter: # Handle invalid input for a guess
-            session['message'] = "Invalid input. Please enter a single letter (A-Z)."
-
+        if len(guess) != 1 or not guess.isalpha():
+            session['message'] = "Please enter a single letter (A-Z)."
+            return redirect(url_for('index'))
+            
+        if guess in guessed_set:
+            session['message'] = f"You already guessed **{guess}**."
+        elif guess in word_to_guess:
+            guessed_set.add(guess)
+            session['message'] = f"Correct guess! **{guess}** is in the word."
+        else:
+            lives -= 1
+            session['lives'] = lives
+            guessed_set.add(guess)
+            session['message'] = f"Incorrect guess! **{guess}** is not in the word. You lost a life."
+            
         # Convert the set back to a list before saving to the session
         session['guessed_letters'] = list(guessed_set)
 
@@ -280,12 +243,18 @@ def index():
 
 @app.route('/restart')
 def restart():
-    """Restarts the game with the current genre."""
-    current_genre = session.get('current_genre', GENRE_LIST[0])
-    initialize_game(current_genre)
+    """Clears the game state from the session and redirects to the index page."""
+    # Preserve the genre so the user can play again with the same genre
+    current_genre = session.get('current_genre') 
+    
+    # Clear game-specific session data
+    session.pop('word_to_guess', None)
+    session.pop('guessed_letters', None)
+    session.pop('lives', None)
+    session.pop('message', None)
+    
+    # Redirect to the main game which will start a new game with the same genre
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    # When running locally, you can use the built-in Flask server
-    # Note: On Render, gunicorn will run the app
     app.run(debug=True)
