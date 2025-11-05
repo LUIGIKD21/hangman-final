@@ -30,7 +30,6 @@ class User(db.Model):
         return f'<User {self.username}>'
 
 # Ensure tables are created when the app runs locally
-# In a deployment environment like Render, you might use a separate script or shell command for this.
 with app.app_context():
     db.create_all()
 
@@ -38,7 +37,8 @@ with app.app_context():
 # --- API CONFIGURATION ---
 RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
 RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
-EXTERNAL_WORD_API_URL = "https://wordsapiviv1.p.rapidapi.com/words/"
+# FIX: Corrected typo from wordsapiviv1 to wordsapiv1
+EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
 
 # Hardcoded GENRE LIST: These will be used to query the API.
 GENRE_LIST = [
@@ -144,9 +144,12 @@ def fetch_word_from_api(genre):
         data = response.json()
         
         if data and 'results' in data and len(data['results']) > 0:
-            return data['results'][0]['word'].upper()
+            word_candidate = data['results'][0]
+            # FIX: Check explicitly for 'word' key before accessing it
+            if 'word' in word_candidate:
+                return word_candidate['word'].upper()
         
-        print(f"API returned no word for genre: {genre}. Falling back.")
+        print(f"API returned no valid word for genre: {genre}. Falling back.")
         return "PYTHON" 
         
     except requests.exceptions.RequestException as e:
@@ -181,26 +184,25 @@ def initialize_game(genre):
     print(f"New game started with word: {word}") 
     return word
 
-# --- Authentication Routes (UPDATED TO USE DB) ---
+# --- Authentication Routes (UPDATED FOR GET REQUESTS) ---
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     """Handles user registration."""
-    # We rely on the static register.html file for GET
+    # Handle GET request: just render the template
     if request.method == 'GET':
-        return redirect(url_for('index')) # If user lands here directly, redirect to game
-
-    # Handle POST
+        return render_template('register.html')
+    
+    # Handle POST request
     username = request.form.get('username')
     password = request.form.get('password')
 
     if not username or not password:
-        # Assuming you'll add error handling to register.html later
         return render_template('register.html', error="Both username and password are required.")
     
     # Check if user already exists
-    existing_user = User.query.filter_by(username=username).first()
-    if existing_user:
+    user_exists = User.query.filter_by(username=username).first()
+    if user_exists:
         return render_template('register.html', error="Username already exists. Please choose another.")
 
     # Create new user and commit to DB
@@ -220,14 +222,16 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """Handles user login."""
-    # We rely on the static login.html file for GET
+    # Handle GET request: Check if already logged in, otherwise show form
     if request.method == 'GET':
-        # If the user is already in the session, go to game
         if session.get('username'):
              return redirect(url_for('index'))
-        return redirect(url_for('index')) # If user lands here directly, redirect to game
+        
+        # Pull message from session if redirected from register
+        message = session.pop('message', None) 
+        return render_template('login.html', message=message)
 
-    # Handle POST
+    # Handle POST request
     username = request.form.get('username')
     password = request.form.get('password')
 
@@ -237,7 +241,6 @@ def login():
     # Check credentials against the database
     user = User.query.filter_by(username=username).first()
     
-    # Check if user exists and password matches (simple plain-text comparison)
     if user and user.password == password:
         session['username'] = username
         session['message'] = f"Welcome, {username}! Start playing."

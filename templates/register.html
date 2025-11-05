@@ -30,7 +30,7 @@
         {% endif %}
         <!-- End Error/Message Display Block -->
         
-        <form action="/register" method="POST" class="space-y-6">
+        <form action="{{ url_for('register') }}" method="POST" class="space-y-6">
             <div>
                 <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
                 <input type="text" id="username" name="username" required
@@ -54,7 +54,7 @@
         <div class="mt-8 text-center">
             <p class="text-sm text-gray-600">
                 Already have an account?
-                <a href="login.html" class="font-semibold text-green-600 hover:text-green-500 transition duration-150 ease-in-out">
+                <a href="{{ url_for('login') }}" class="font-semibold text-green-600 hover:text-green-500 transition duration-150 ease-in-out">
                     Log in
                 </a>
             </p>
