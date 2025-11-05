@@ -1,348 +1,386 @@
 import random
 import os
 import requests 
-import sys
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, current_app
 from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy.exc import IntegrityError, OperationalError
+import logging # Use for better logging/debugging
 
 # --- Configuration and Data ---
 app = Flask(__name__)
+# Set up logging for better debugging
+app.logger.setLevel(logging.INFO)
 
 # IMPORTANT: NEVER use this default key in production. Use a Render Environment Variable instead.
-# For deployment, remove this line and set SECRET_KEY in Render's dashboard.
 app.secret_key = os.environ.get('SECRET_KEY', 'a_very_secret_key_for_hangman_game_123') 
 
 MAX_LIVES = 6
 
-# --- Database Configuration ---
-# Get DATABASE_URL from environment variables
-db_url = os.environ.get('DATABASE_URL')
-
-if not db_url:
-    print("FATAL ERROR: DATABASE_URL environment variable not found.", file=sys.stderr)
-    # Use a local SQLite database for local fallback testing only
-    db_url = 'sqlite:///hangman_data.db' 
-
-# Fix for SQLAlchemy compatibility with Render's postgres URL format
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
-
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db = SQLAlchemy(app)
-
 # --- NEW API CONFIGURATION ---
-# These values MUST be set as Environment Variables on Render!
 RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
 RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
-
-# The base endpoint for searching and fetching words.
 EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
 
-# Hardcoded GENRE LIST: These will be used to query the API.
+# Hardcoded GENRE LIST
 GENRE_LIST = [
     "Animals", 
     "Sports", 
     "Technology"
 ]
 
-# Simplified ASCII art for the Hangman stages (0 to 6 misses)
-HANGMAN_STAGES = [
-    """
-       -----
-       |   |
-           |
-           |
-           |
-           -
-    """, # 0 misses (6 lives)
-    """
-       -----
-       |   |
-       O   |
-           |
-           |
-           -
-    """, # 1 miss (5 lives)
-    """
-       -----
-       |   |
-       O   |
-       |   |
-           |
-           -
-    """, # 2 misses (4 lives)
-    """
-       -----
-       |   |
-       O   |
-      /|   |
-           |
-           -
-    """, # 3 misses (3 lives)
-    """
-       -----
-       |   |
-       O   |
-      /|\\  |
-           |
-           -
-    """, # 4 misses (2 lives)
-    """
-       -----
-       |   |
-       O   |
-      /|\\  |
-      /    |
-           -
-    """, # 5 misses (1 life)
-    """
-       -----
-       |   |
-       O   |
-      /|\\  |
-      / \\  |
-           -
-    """ # 6 misses (0 lives) - GAME OVER
-]
+# --- Database Configuration ---
+# Use the DATABASE_URL environment variable (standard for Render Postgres) or default to SQLite
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///hangman.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# --- Database Models (User and Game) ---
+db = SQLAlchemy(app)
 
+# --- Database Models ---
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    # INCREASED from 128 to 256 characters to accommodate long scrypt password hashes
-    password_hash = db.Column(db.String(256), nullable=False) 
     
-    # Relationship to Game statistics
-    game_stats = db.relationship('Game', backref='player', uselist=False, lazy=True)
+    # Relationship for stats (one-to-one or one-to-zero)
+    stats = db.relationship('GameStats', backref='player', lazy=True, uselist=False)
 
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
+    def __repr__(self):
+        return f"<User id={self.id}>"
 
-    def check_password(self, password):
-        return check_password_hash(password, self.password_hash)
-
-class Game(db.Model):
+class GameStats(db.Model):
+    __tablename__ = 'game_stats'
     id = db.Column(db.Integer, primary_key=True)
+    # The ForeignKey relationship that was failing
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
-    # Ensure these are 'wins' and 'losses' to match the code logic
-    wins = db.Column(db.Integer, default=0) 
+    wins = db.Column(db.Integer, default=0)
     losses = db.Column(db.Integer, default=0)
 
-    def total_games(self):
-        return self.wins + self.losses
+    def __repr__(self):
+        return f"<GameStats user_id={self.user_id}, wins={self.wins}, losses={self.losses}>"
 
-    def win_rate(self):
-        total = self.total_games()
-        return f"{(self.wins / total) * 100:.2f}%" if total > 0 else "0.00%"
-
-# --- Application Initialization Function ---
-
-def initialize_database():
-    """
-    Creates tables if they don't exist. This is called outside the
-    if __name__ == '__main__': block to ensure Gunicorn runs it.
-    """
-    with app.app_context():
-        # This will create tables if they don't exist.
-        db.create_all()
-
-# Call the initialization function immediately after defining models and db object
-initialize_database()
-
-# --- Helper Functions ---
-
-def get_display_word(word, guessed_letters):
-    """Returns the word with unguessed letters replaced by underscores."""
-    return ' '.join([letter if letter in guessed_letters else '_' for letter in word])
-
-def initialize_game_session(genre="Technology"):
-    """Resets the session state for a new game."""
-    session['word'] = None # Forces a new word fetch
-    session['guessed_letters'] = []
-    session['lives'] = MAX_LIVES
-    session['is_game_over'] = False
-    session['message'] = "Guess a letter to start!"
-    session['genre'] = genre
-
-def fetch_random_word_by_genre(genre):
-    """
-    Fetches a random word related to the specified genre using WordsAPI.
-    """
-    # Fallback to an easy word if API key is missing
-    if not RAPIDAPI_KEY or not RAPIDAPI_HOST:
-        print("API Keys missing. Falling back to local data.", file=sys.stderr)
-        return random.choice(["PROGRAMMER", "FLASK", "DEVELOPER"])
-
-    headers = {
-        'x-rapidapi-host': RAPIDAPI_HOST,
-        'x-rapidapi-key': RAPIDAPI_KEY
-    }
-    
-    # 1. Attempt to search by topic
-    params = {
-        'random': 'true',
-        'limit': 1,
-        'topic': genre.lower() # Filter by the selected genre
-    }
-    
+# --- Database Initialization ---
+# This ensures tables are created when the app starts
+with app.app_context():
     try:
-        response = requests.get(EXTERNAL_WORD_API_URL, headers=headers, params=params, timeout=10)
-        response.raise_for_status() # Raises HTTPError for bad status codes
-        data = response.json()
-        
-        # WordsAPI returns a list of words under the 'words' key
-        if data and 'words' in data and len(data['words']) > 0:
-            word = data['words'][0].upper()
-            return word
-        
-        # 2. Fallback: If topic search returns no words, try a general random word
-        print(f"API returned no word for topic '{genre}'. Falling back to general random word.", file=sys.stderr)
-        params_general = {'random': 'true', 'limit': 1}
-        response = requests.get(EXTERNAL_WORD_API_URL, headers=headers, params=params_general, timeout=10)
-        response.raise_for_status()
-        data_general = response.json()
-        
-        if data_general and 'words' in data_general and len(data_general['words']) > 0:
-             return data_general['words'][0].upper()
-
-        # 3. Final Fallback: Use a hardcoded word
-        return random.choice(["DEFAULT", "GENERIC", "HANGMAN"])
+        db.create_all()
+        app.logger.info("Database tables created successfully.")
+    except OperationalError as e:
+        # Catch errors if running against a remote DB without initial setup
+        app.logger.warning(f"Could not create tables (may already exist or permission issue): {e}")
 
 
-    except requests.exceptions.RequestException as err:
-        print(f"API Request Error: {err}", file=sys.stderr)
-        return random.choice(["APIERROR", "NETWORK"])
-    except Exception as e:
-        print(f"General error during API call: {e}", file=sys.stderr)
-        return random.choice(["EXCEPTION", "FAILURE"])
+# --- User and Stats Utilities ---
+
+def get_or_create_user():
+    """
+    Ensures a User exists for the current session, creating one if necessary.
+    Returns the User object.
+    """
+    user_id = session.get('user_id')
+    user = None
+    
+    if user_id:
+        user = User.query.get(user_id)
+
+    if user is None:
+        # Create a new anonymous user if one isn't found in the session or DB
+        user = User()
+        db.session.add(user)
+        try:
+            db.session.commit()
+            session['user_id'] = user.id
+            current_app.logger.info(f"Created new anonymous user with ID: {user.id}")
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"Failed to create new user: {e}")
+            return None
+            
+    return user
+
+def get_user_stats(user_id):
+    """
+    Retrieves the GameStats for a given user ID.
+    Returns (wins, losses) tuple or (0, 0) if no stats found.
+    """
+    if user_id is None:
+        return 0, 0
+        
+    stats = GameStats.query.filter_by(user_id=user_id).first()
+    if stats:
+        return stats.wins, stats.losses
+    return 0, 0
 
 
 def update_user_stats(user_id, is_win):
-    """Updates the user's game statistics in the database."""
-    with app.app_context():
-        game_stats = Game.query.filter_by(user_id=user_id).first()
-        if not game_stats:
-            # Should not happen if registration is successful, but good safeguard
-            game_stats = Game(user_id=user_id, wins=0, losses=0)
-            db.session.add(game_stats)
-        
-        if is_win:
-            game_stats.wins += 1
-        else:
-            game_stats.losses += 1
-            
-        db.session.commit()
-
-def get_user_stats_data(user_id):
-    """Fetches user stats and formats them for the template."""
-    # Note: user_id will be None if not logged in
+    """
+    Updates the user's win/loss record.
+    If a GameStats record does not exist for the user, it creates one.
+    """
     if user_id is None:
-        return {'username': 'Guest', 'wins': 0, 'losses': 0, 'total_games': 0, 'win_rate': '0.00%'}
+        current_app.logger.warning("Attempted to update stats without a user_id.")
+        return
 
-    with app.app_context():
-        # Use .get() only if user_id is definitely an integer (which it should be from session)
-        user = User.query.get(user_id) 
-        if user and user.game_stats:
-            stats = user.game_stats
-            return {
-                'username': user.username,
-                'wins': stats.wins,
-                'losses': stats.losses,
-                'total_games': stats.total_games(),
-                'win_rate': stats.win_rate()
-            }
-        # Fallback if user is logged in but has no stats (or stats fetch failed)
-        return {'username': user.username if user else 'Guest', 'wins': 0, 'losses': 0, 'total_games': 0, 'win_rate': '0.00%'}
+    # Find the GameStats record for this user (or create it if it doesn't exist)
+    game_stats = GameStats.query.filter_by(user_id=user_id).first()
+    
+    if game_stats is None:
+        # Create a new game stats record for this user, which *now* has a verified User.id
+        game_stats = GameStats(user_id=user_id, wins=0, losses=0)
+        db.session.add(game_stats)
+        
+    # Update stats
+    if is_win:
+        game_stats.wins += 1
+    else:
+        game_stats.losses += 1
+
+    try:
+        db.session.commit()
+        current_app.logger.info(f"User {user_id} stats updated: W:{game_stats.wins}, L:{game_stats.losses}")
+    except IntegrityError:
+        # Rollback if an error still occurs (e.g., race condition or late-deleted User)
+        db.session.rollback()
+        current_app.logger.error(f"Integrity Error during stat update for user {user_id}. Rolling back.")
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"General error during stat update for user {user_id}: {e}")
+
+# Simplified ASCII art for the Hangman stages (0 to 6 misses)
+HANGMAN_STAGES = [
+    # 0 lives left (Loss)
+    """
+      +---+
+      |   |
+      O   |
+     /|\\  |
+     / \\  |
+          |
+    ========
+    """,
+    # 1 life left
+    """
+      +---+
+      |   |
+      O   |
+     /|\\  |
+     /    |
+          |
+    ========
+    """,
+    # 2 lives left
+    """
+      +---+
+      |   |
+      O   |
+     /|\\  |
+          |
+          |
+    ========
+    """,
+    # 3 lives left
+    """
+      +---+
+      |   |
+      O   |
+     /|   |
+          |
+          |
+    ========
+    """,
+    # 4 lives left
+    """
+      +---+
+      |   |
+      O   |
+      |   |
+          |
+          |
+    ========
+    """,
+    # 5 lives left
+    """
+      +---+
+      |   |
+      O   |
+          |
+          |
+          |
+    ========
+    """,
+    # 6 lives left (Start)
+    """
+      +---+
+      |   |
+          |
+          |
+          |
+          |
+    ========
+    """
+]
+
+# --- Game Logic Helpers ---
+
+def get_word_from_api(genre=None):
+    """Fetches a random word from the external API based on genre."""
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": RAPIDAPI_HOST
+    }
+    
+    params = {
+        "letterPattern": "^[a-z]{5,10}$", # 5 to 10 letters, only lowercase A-Z
+        "limit": 1 # Only need one word
+    }
+    
+    # Use topic parameter for filtering if a genre is specified and it's not the generic "Technology" that failed
+    if genre and genre in GENRE_LIST:
+        params["topic"] = genre.lower()
+    
+    # The API endpoint for random word is '/words/random'
+    url = EXTERNAL_WORD_API_URL.replace("/words/", "/words/random")
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=5)
+        response.raise_for_status() # Raise exception for bad status codes
+        
+        data = response.json()
+        
+        # Check for word in the response structure
+        word = data.get('word', None)
+        
+        if word:
+            return word.lower()
+            
+    except requests.exceptions.HTTPError as errh:
+        current_app.logger.error(f"HTTP Error fetching word: {errh}")
+    except requests.exceptions.ConnectionError as errc:
+        current_app.logger.error(f"Connection Error fetching word: {errc}")
+    except requests.exceptions.Timeout as errt:
+        current_app.logger.error(f"Timeout Error fetching word: {errt}")
+    except requests.exceptions.RequestException as err:
+        current_app.logger.error(f"Request Error fetching word: {err}")
+    except Exception as e:
+        current_app.logger.error(f"General error: {e}")
+
+    # Fallback to a hardcoded list if API fails or no word is returned
+    current_app.logger.info(f"API returned no word for topic '{genre}'. Falling back to general random word.")
+    fallback_words = ["flask", "python", "render", "deploy", "coding", "hangman", "secret"]
+    return random.choice(fallback_words)
+
+def get_display_word(word, guessed_letters):
+    """Returns the word with unguessed letters masked by underscores."""
+    display = ""
+    for letter in word:
+        if letter in guessed_letters:
+            display += letter
+        else:
+            display += "_"
+    return " ".join(display)
 
 # --- Routes ---
 
+@app.route('/restart', methods=['GET'])
+def restart():
+    """Clear session variables to start a new game."""
+    session.pop('word_to_guess', None)
+    session.pop('guessed_letters', None)
+    session.pop('lives', None)
+    session.pop('message', None)
+    return redirect(url_for('hangman_game'))
+
 @app.route('/', methods=['GET', 'POST'])
 def hangman_game():
-    user_id = session.get('user_id')
-    user_stats = get_user_stats_data(user_id)
-    is_logged_in = user_id is not None
     
-    # 1. Handle POST Requests (New Game or Guess)
-    if request.method == 'POST':
-        # Check if the request is to start a NEW GAME (via genre select form)
-        if 'genre_select' in request.form:
-            selected_genre = request.form['genre_select']
-            initialize_game_session(genre=selected_genre)
-            # The game state is now reset, so continue to fetch/render
+    # 1. Handle New Game Request (Genre selection)
+    if request.method == 'POST' and 'genre_select' in request.form:
+        genre = request.form.get('genre_select')
+        word = get_word_from_api(genre)
         
-        # Check if the request is a LETTER GUESS
-        elif 'letter' in request.form and not session.get('is_game_over', False):
-            guess = request.form['letter'].upper()
-            
-            word_to_guess = session.get('word')
-            guessed_set = set(session.get('guessed_letters', []))
-            lives = session.get('lives')
-            
-            if not word_to_guess:
-                # Should not happen, but safe guard against no word
-                session['message'] = "Error: Word not loaded. Try restarting."
-            elif not guess.isalpha() or len(guess) != 1:
-                session['message'] = "🚨 Invalid input. Please enter a single letter (A-Z)."
-            elif guess in guessed_set:
-                session['message'] = f"✅ You already guessed **{guess}**."
-            elif guess in word_to_guess:
-                guessed_set.add(guess)
-                session['message'] = f"🎉 Good guess! **{guess}** is in the word."
-            else:
-                guessed_set.add(guess)
-                session['lives'] -= 1
-                session['message'] = f"❌ Wrong guess. **{guess}** is not in the word."
-            
-            # Convert the set back to a list before saving to the session
-            session['guessed_letters'] = list(guessed_set)
-
-    # 2. Ensure Session State Exists (First load or new user)
-    if 'word' not in session or session['word'] is None:
-        # Get the word based on the stored genre (defaulting to Technology if not set)
-        current_genre = session.get('genre', 'Technology')
-        word_to_guess = fetch_random_word_by_genre(current_genre)
-        
-        # Initialize full game state
-        session['word'] = word_to_guess
+        session['word_to_guess'] = word
         session['guessed_letters'] = []
         session['lives'] = MAX_LIVES
-        session['is_game_over'] = False
-        session['message'] = "Guess a letter to start!"
+        session['message'] = f"New game started! Word is from **{genre}**."
+        session['current_genre'] = genre
+        
+        # Redirect to GET to prevent form resubmission on refresh
+        return redirect(url_for('hangman_game'))
+        
+    # --- State Initialization/Retrieval ---
     
-    # Re-fetch current state
-    word_to_guess = session.get('word').upper()
-    guessed_set = set(session.get('guessed_letters', []))
+    word_to_guess = session.get('word_to_guess')
+    guessed_letters = session.get('guessed_letters')
     lives = session.get('lives')
-    is_game_over = session.get('is_game_over', False) # Default to False if missing
-    current_genre = session.get('genre')
-    message = session.get('message', "")
+    current_genre = session.get('current_genre', GENRE_LIST[0])
+    
+    # If no game is running, set initial state
+    if not word_to_guess:
+        word_to_guess = get_word_from_api(current_genre)
+        session['word_to_guess'] = word_to_guess
+        session['guessed_letters'] = []
+        session['lives'] = MAX_LIVES
+        session['message'] = "Welcome to Hangman! Guess a letter."
+        lives = MAX_LIVES # Re-fetch lives after setting default
+    
+    # Always convert list of guessed letters back to a set for efficient lookups
+    guessed_set = set(guessed_letters)
+    is_game_over = False
+
+    # 2. Handle Letter Guess (POST request)
+    if request.method == 'POST' and 'letter' in request.form and not is_game_over:
+        guess = request.form['letter'].lower().strip()
+        session['message'] = "" # Clear previous messages
+        
+        # Validation
+        if not guess.isalpha() or len(guess) != 1:
+            session['message'] = "Please enter a single letter (A-Z)."
+        elif guess in guessed_set:
+            session['message'] = f"You already guessed **{guess.upper()}**."
+        else:
+            guessed_set.add(guess)
+            
+            if guess in word_to_guess:
+                session['message'] = f"**{guess.upper()}** is correct!"
+            else:
+                session['lives'] -= 1
+                session['message'] = f"**{guess.upper()}** is wrong. You lost a life!"
+
+        # Convert the set back to a list before saving to the session
+        session['guessed_letters'] = list(guessed_set)
+
+        # Re-fetch updated state for rendering after POST
+        lives = session.get('lives')
     
     # 3. Update display word and check for Win/Loss state
     display_word = get_display_word(word_to_guess, guessed_set)
     is_win = "_" not in display_word
     is_loss = lives <= 0
     
-    if not is_game_over:
-        if is_win:
-            is_game_over = True
-            session['is_game_over'] = True
-            session['message'] = f"🎉 YOU WON! The word was **{word_to_guess}**."
-            if user_id: update_user_stats(user_id, True)
-        elif is_loss:
-            is_game_over = True
-            session['is_game_over'] = True
-            session['message'] = f"💀 GAME OVER. The word was **{word_to_guess}**."
-            if user_id: update_user_stats(user_id, False)
-
-    # If the game is over, use the final message from the session
-    if is_game_over:
-        message = session.get('message')
+    message = session.get('message', "")
     
-    # 4. Render the template with the current state
+    if is_win:
+        is_game_over = True
+        message = f"🎉 YOU WON! The word was **{word_to_guess.upper()}**."
+        
+        # --- FIX: CALL STATS UPDATE ---
+        user = get_or_create_user() # Ensure user exists
+        if user: update_user_stats(user.id, True)
+
+    elif is_loss:
+        is_game_over = True
+        message = f"💀 GAME OVER. The word was **{word_to_guess.upper()}**."
+
+        # --- FIX: CALL STATS UPDATE ---
+        user = get_or_create_user() # Ensure user exists
+        if user: update_user_stats(user.id, False)
+
+    
+    # 4. Final Data Preparation
+    
+    # Ensure user is ready to fetch stats
+    user = get_or_create_user()
+    user_id = user.id if user else None
+    
+    user_wins, user_losses = get_user_stats(user_id)
+    
     lives_index = MAX_LIVES - lives
     
     return render_template(
@@ -356,80 +394,12 @@ def hangman_game():
         max_lives=MAX_LIVES,
         genres=GENRE_LIST,
         current_genre=current_genre,
-        is_logged_in=is_logged_in,
-        user_stats=user_stats
+        user_wins=user_wins,
+        user_losses=user_losses
     )
 
-@app.route('/restart', methods=['GET'])
-def restart():
-    """Starts a new game, keeping the current genre."""
-    current_genre = session.get('genre', 'Technology')
-    initialize_game_session(genre=current_genre)
-    return redirect(url_for('hangman_game'))
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    error = None
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        user = User.query.filter_by(username=username).first()
-        
-        if user:
-            error = "Username already taken. Please choose another."
-        else:
-            new_user = User(username=username)
-            new_user.set_password(password)
-            
-            # Create associated game stats entry immediately
-            new_stats = Game(player=new_user) 
-            
-            db.session.add_all([new_user, new_stats])
-            
-            try:
-                db.session.commit()
-                # Log the user in immediately after registration
-                session['user_id'] = new_user.id
-                # Initialize their game to start fresh
-                initialize_game_session(genre=session.get('genre', 'Technology'))
-                return redirect(url_for('hangman_game'))
-            except Exception as e:
-                db.session.rollback()
-                print(f"Database error during registration: {e}", file=sys.stderr)
-                error = "An unexpected error occurred. Please try again."
-
-    return render_template('register.html', error=error)
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    error = None
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        user = User.query.filter_by(username=username).first()
-        
-        if user and user.check_password(password):
-            session['user_id'] = user.id
-            # Log successful login
-            print(f"User {username} logged in successfully.")
-            return redirect(url_for('hangman_game'))
-        else:
-            error = "Invalid username or password."
-            # Log failed login attempt
-            print(f"Failed login attempt for username: {username}", file=sys.stderr)
-
-    return render_template('login.html', error=error)
-
-@app.route('/logout')
-def logout():
-    session.pop('user_id', None)
-    # Re-initialize game session to clear user-specific data
-    initialize_game_session(genre=session.get('genre', 'Technology'))
-    return redirect(url_for('hangman_game'))
-
-# --- Main Run Block (For local testing only) ---
 if __name__ == '__main__':
-    # When running locally, the tables are already initialized by the function call above.
+    # For local testing, ensure the DB is initialized
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
