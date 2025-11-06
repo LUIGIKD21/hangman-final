@@ -40,8 +40,8 @@ with app.app_context():
 
 # --- API CONFIGURATION ---
 RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
-RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
-EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
+RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'twinword-word-graph-dictionary.p.rapidapi.com')
+EXTERNAL_WORD_API_URL = "https://twinword-word-graph-dictionary.p.rapidapi.com/theme/?entry=mask"
 
 # Hardcoded GENRE LIST: These will be used to query the API.
 # Updated to use more reliable categories for the Words API.
