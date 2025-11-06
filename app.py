@@ -122,8 +122,11 @@ HANGMAN_STAGES = [
 
 # --- Utility Functions ---
 
-def fetch_word_from_api(genre):
-    """Fetches a random word based on a given genre using the external API."""
+def fetch_word_from_api(genre, max_retries=3):
+    """
+    Fetches a random word based on a given genre using the external API with retries.
+    It ensures the word is purely alphabetic.
+    """
     if not RAPIDAPI_KEY:
         # Fallback if API key is not set
         print("Warning: RAPIDAPI_KEY not set. Using fallback words.")
@@ -140,26 +143,36 @@ def fetch_word_from_api(genre):
         "x-rapidapi-key": RAPIDAPI_KEY,
         "x-rapidapi-host": RAPIDAPI_HOST
     }
-    
-    # Removed the restrictive 'letterPattern' from the query to ensure more words are returned.
     search_url = f"{EXTERNAL_WORD_API_URL}search?topics={genre.lower()}&random=true&limit=1"
     
-    try:
-        response = requests.get(search_url, headers=headers, timeout=5)
-        response.raise_for_status() 
-        data = response.json()
-        
-        if data and 'results' in data and len(data['results']) > 0:
-            word_candidate = data['results'][0]
-            if 'word' in word_candidate:
-                return word_candidate['word'].upper()
-        
-        print(f"API returned no valid word for genre: {genre}. Falling back to PYTHON.")
-        return "PYTHON"  # Fallback 1: API returned no results
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching word from API: {e}. Falling back to GEMINI.")
-        return "GEMINI" # Fallback 2: API call failed
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(search_url, headers=headers, timeout=5)
+            response.raise_for_status() 
+            data = response.json()
+            
+            if data and 'results' in data and len(data['results']) > 0:
+                word_candidate = data['results'][0].get('word')
+                
+                # Check if the word is valid (alphabetic and not empty)
+                if word_candidate and word_candidate.isalpha():
+                    return word_candidate.upper()
+                
+                # If the word is invalid (e.g., contains spaces, hyphens, or is empty), retry
+                print(f"Attempt {attempt + 1}: API returned invalid word '{word_candidate}'. Retrying...")
+                continue # Go to the next attempt
+            
+            # If API returned no results, fall through to the final fallback after attempts
+            break 
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Attempt {attempt + 1}: Error fetching word from API: {e}. Retrying...")
+            # Continue to the next attempt if it's a transient connection error
+            continue
+
+    # Final Fallback if all retries fail
+    print(f"All {max_retries} API attempts failed for genre: {genre}. Falling back to PYTHON.")
+    return "PYTHON"
 
 
 def get_display_word(word, guessed_letters):
@@ -184,7 +197,8 @@ def initialize_game(genre):
     session['is_game_over'] = False
     
     if not word.isalpha():
-        # Recursive call if the API returns a non-alphabetic word by chance
+        # This check is mostly redundant now due to the fetch_word_from_api logic, 
+        # but serves as a final safety check before printing the word.
         return initialize_game(genre) 
     
     print(f"New game started with word: {word}") 
