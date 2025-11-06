@@ -39,12 +39,11 @@ with app.app_context():
 
 
 # --- API CONFIGURATION ---
-RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
-RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'twinword-word-graph-dictionary.p.rapidapi.com')
-EXTERNAL_WORD_API_URL = "https://twinword-word-graph-dictionary.p.rapidapi.com/theme/?entry=mask"
+# REMOVED: RAPIDAPI_KEY and RAPIDAPI_HOST since the new API doesn't need a key.
+# We are switching to the Random Word API, which is often more reliable for simple words.
+EXTERNAL_WORD_API_URL = "https://random-word-api.herokuapp.com/word?number=1" 
 
-# Hardcoded GENRE LIST: These will be used to query the API.
-# Updated to use more reliable categories for the Words API.
+# Hardcoded GENRE LIST: These are now primarily for display and local fallback.
 GENRE_LIST = [
     "Food", 
     "Sports", 
@@ -124,55 +123,49 @@ HANGMAN_STAGES = [
 
 def fetch_word_from_api(genre, max_retries=3):
     """
-    Fetches a random word based on a given genre using the external API with retries.
-    It ensures the word is purely alphabetic.
+    Fetches a single random word from the Random Word API.
+    The 'genre' is used only for selecting a specific fallback word if the API fails.
     """
-    if not RAPIDAPI_KEY:
-        # Fallback if API key is not set
-        print("Warning: RAPIDAPI_KEY not set. Using fallback words.")
-        fallback_words = {
-            "Food": ["PIZZA", "SUSHI", "LEMON", "CARROT"],
-            "Sports": ["SOCCER", "BASKETBALL", "FOOTBALL", "TENNIS", "HOCKEY"],
-            "Science": ["PROTON", "ORBIT", "GENETICS", "ASTRONOMY"],
-            "Geography": ["CANADA", "RIVER", "MOUNTAIN", "DESERT"]
-        }
-        return random.choice(fallback_words.get(genre, ["FLASK"]))
-
-    # Prepare headers for the API call
-    headers = {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST
-    }
-    search_url = f"{EXTERNAL_WORD_API_URL}search?topics={genre.lower()}&random=true&limit=1"
     
+    # Fallback words, now organized by genre for context if the API fails
+    fallback_words = {
+        "Food": ["CHEESE", "SUSHI", "LEMON", "CARROT"],
+        "Sports": ["SOCCER", "BASKETBALL", "FOOTBALL", "TENNIS", "HOCKEY"],
+        "Science": ["PROTON", "ORBIT", "GENETICS", "ASTRONOMY"],
+        "Geography": ["CANADA", "RIVER", "MOUNTAIN", "DESERT"]
+    }
+    
+    # Select a relevant fallback word if all else fails
+    fallback_word = random.choice(fallback_words.get(genre, ["PYTHON"]))
+
     for attempt in range(max_retries):
         try:
-            response = requests.get(search_url, headers=headers, timeout=5)
+            # We are requesting 1 random word
+            response = requests.get(EXTERNAL_WORD_API_URL, timeout=5)
             response.raise_for_status() 
             data = response.json()
             
-            if data and 'results' in data and len(data['results']) > 0:
-                word_candidate = data['results'][0].get('word')
+            # The Random Word API returns a list containing one word, e.g., ['apple']
+            if data and isinstance(data, list) and len(data) > 0:
+                word_candidate = data[0]
                 
                 # Check if the word is valid (alphabetic and not empty)
                 if word_candidate and word_candidate.isalpha():
                     return word_candidate.upper()
                 
-                # If the word is invalid (e.g., contains spaces, hyphens, or is empty), retry
                 print(f"Attempt {attempt + 1}: API returned invalid word '{word_candidate}'. Retrying...")
-                continue # Go to the next attempt
+                continue
             
-            # If API returned no results, fall through to the final fallback after attempts
-            break 
+            # If the API returns an unexpected structure, break and use fallback
+            break
             
         except requests.exceptions.RequestException as e:
             print(f"Attempt {attempt + 1}: Error fetching word from API: {e}. Retrying...")
-            # Continue to the next attempt if it's a transient connection error
             continue
 
     # Final Fallback if all retries fail
-    print(f"All {max_retries} API attempts failed for genre: {genre}. Falling back to PYTHON.")
-    return "PYTHON"
+    print(f"All {max_retries} API attempts failed. Falling back to {fallback_word}.")
+    return fallback_word
 
 
 def get_display_word(word, guessed_letters):
@@ -197,8 +190,7 @@ def initialize_game(genre):
     session['is_game_over'] = False
     
     if not word.isalpha():
-        # This check is mostly redundant now due to the fetch_word_from_api logic, 
-        # but serves as a final safety check before printing the word.
+        # Safety check if the fallback word itself was invalid (unlikely)
         return initialize_game(genre) 
     
     print(f"New game started with word: {word}") 
@@ -405,6 +397,5 @@ def restart():
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    if not RAPIDAPI_KEY:
-        os.environ['X_RAPIDAPI_KEY'] = 'DEMO_KEY'
+    # Removed API key check since the new API doesn't require one
     app.run(debug=True)
