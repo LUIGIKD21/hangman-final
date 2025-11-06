@@ -44,10 +44,12 @@ RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
 EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
 
 # Hardcoded GENRE LIST: These will be used to query the API.
+# Updated to use more reliable categories for the Words API.
 GENRE_LIST = [
-    "Animals", 
+    "Food", 
     "Sports", 
-    "Technology"
+    "Science",
+    "Geography"
 ]
 
 # Simplified ASCII art for the Hangman stages (0 to 6 misses)
@@ -126,9 +128,10 @@ def fetch_word_from_api(genre):
         # Fallback if API key is not set
         print("Warning: RAPIDAPI_KEY not set. Using fallback words.")
         fallback_words = {
-            "Animals": ["LION", "TIGER", "BEAR", "ELEPHANT", "GIRAFFE"],
+            "Food": ["PIZZA", "SUSHI", "LEMON", "CARROT"],
             "Sports": ["SOCCER", "BASKETBALL", "FOOTBALL", "TENNIS", "HOCKEY"],
-            "Technology": ["COMPUTER", "ROBOTICS", "INTERNET", "PROGRAMMING", "SOFTWARE"]
+            "Science": ["PROTON", "ORBIT", "GENETICS", "ASTRONOMY"],
+            "Geography": ["CANADA", "RIVER", "MOUNTAIN", "DESERT"]
         }
         return random.choice(fallback_words.get(genre, ["FLASK"]))
 
