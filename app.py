@@ -37,7 +37,6 @@ with app.app_context():
 # --- API CONFIGURATION ---
 RAPIDAPI_KEY = os.environ.get('X_RAPIDAPI_KEY')
 RAPIDAPI_HOST = os.environ.get('X_RAPIDAPI_HOST', 'wordsapiv1.p.rapidapi.com')
-# FIX: Corrected typo from wordsapiviv1 to wordsapiv1
 EXTERNAL_WORD_API_URL = "https://wordsapiv1.p.rapidapi.com/words/"
 
 # Hardcoded GENRE LIST: These will be used to query the API.
@@ -145,7 +144,6 @@ def fetch_word_from_api(genre):
         
         if data and 'results' in data and len(data['results']) > 0:
             word_candidate = data['results'][0]
-            # FIX: Check explicitly for 'word' key before accessing it
             if 'word' in word_candidate:
                 return word_candidate['word'].upper()
         
@@ -179,33 +177,30 @@ def initialize_game(genre):
     session['is_game_over'] = False
     
     if not word.isalpha():
-        initialize_game(genre) 
+        # Recursive call if the API returns a non-alphabetic word by chance
+        return initialize_game(genre) 
     
     print(f"New game started with word: {word}") 
     return word
 
-# --- Authentication Routes (UPDATED FOR GET REQUESTS) ---
+# --- Authentication Routes ---
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     """Handles user registration."""
-    # Handle GET request: just render the template
     if request.method == 'GET':
         return render_template('register.html')
     
-    # Handle POST request
     username = request.form.get('username')
     password = request.form.get('password')
 
     if not username or not password:
         return render_template('register.html', error="Both username and password are required.")
     
-    # Check if user already exists
     user_exists = User.query.filter_by(username=username).first()
     if user_exists:
         return render_template('register.html', error="Username already exists. Please choose another.")
 
-    # Create new user and commit to DB
     new_user = User(username=username, password=password)
     try:
         db.session.add(new_user)
@@ -222,23 +217,19 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """Handles user login."""
-    # Handle GET request: Check if already logged in, otherwise show form
     if request.method == 'GET':
         if session.get('username'):
              return redirect(url_for('index'))
         
-        # Pull message from session if redirected from register
         message = session.pop('message', None) 
         return render_template('login.html', message=message)
 
-    # Handle POST request
     username = request.form.get('username')
     password = request.form.get('password')
 
     if not username or not password:
         return render_template('login.html', error="Both username and password are required.")
 
-    # Check credentials against the database
     user = User.query.filter_by(username=username).first()
     
     if user and user.password == password:
@@ -265,18 +256,24 @@ def index():
     # 1. Check for current session state
     word_to_guess = session.get('word')
     guessed_letters = session.get('guessed_letters', [])
-    lives = session.get('lives')
+    
+    # FIX: Ensure lives always has a default integer value (MAX_LIVES) if not in session, 
+    # preventing the TypeError when checking is_loss.
+    lives = session.get('lives', MAX_LIVES) 
+    
     current_genre = session.get('genre', GENRE_LIST[0])
     is_game_over = session.get('is_game_over', False)
-    username = session.get('username', None) # Get username for template
+    username = session.get('username', None)
 
-    # Set up the guessed set for quick lookups
     guessed_set = set(guessed_letters)
     
-    # If no word in session, start a new game
+    # If no word in session (new game or session reset), initialize
     if not word_to_guess:
         word_to_guess = initialize_game(current_genre)
-        guessed_set = set() # Reset set after initialization
+        # When a new game is initialized, pull the fresh state from the session
+        guessed_set = set()
+        is_game_over = False
+        lives = MAX_LIVES # Update local variable after initialization
 
     # 1.1 Handle Genre Change (POST from genre-form)
     if request.method == 'POST' and 'genre_select' in request.form:
@@ -284,7 +281,7 @@ def index():
         word_to_guess = initialize_game(new_genre)
         guessed_set = set()
         is_game_over = False
-        lives = MAX_LIVES
+        lives = MAX_LIVES # Update local variable
 
     # 1.2 Handle Letter Guess (POST from guess form)
     elif request.method == 'POST' and 'letter' in request.form and not is_game_over:
@@ -307,7 +304,7 @@ def index():
         # Convert the set back to a list before saving to the session
         session['guessed_letters'] = list(guessed_set)
 
-        # Re-fetch updated state for rendering after POST
+        # Re-fetch updated lives state after POST (if it changed)
         lives = session.get('lives')
     
     # 2. Update display word and check for Win/Loss state
@@ -340,7 +337,6 @@ def index():
         max_lives=MAX_LIVES,
         genres=GENRE_LIST, 
         current_genre=session.get('genre'),
-        # Pass username to the template for display in the navigation bar
         username=username
     )
 
