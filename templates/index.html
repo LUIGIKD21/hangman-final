@@ -58,7 +58,19 @@
             </div>
 
             <!-- Game Details (Right/Bottom) -->
-            <div class="w-full md:w-1/2 mt-6 md:mt-0 space-y-3">
+            <div class="w-full md:w-1/2 mt-6 md:mt-0 space-y-4">
+
+                <!-- NEW: User Record Display -->
+                {% if username %}
+                <div class="p-3 bg-gray-50 rounded-lg border border-gray-200 shadow-inner">
+                    <p class="text-sm font-bold text-gray-700">Record ({{ username }}):</p>
+                    <div class="flex justify-between text-base mt-1">
+                        <span class="text-green-600 font-extrabold">W: {{ user_record.wins }}</span>
+                        <span class="text-red-600 font-extrabold">L: {{ user_record.losses }}</span>
+                    </div>
+                </div>
+                {% endif %}
+                <!-- END NEW: User Record Display -->
                 
                 <p id="lives" class="text-lg font-bold text-gray-700">
                     Lives Remaining: <span class="text-red-500">{{ lives }}/{{ max_lives }}</span>

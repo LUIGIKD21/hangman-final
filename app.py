@@ -25,11 +25,15 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False) # Store plain text for now
+    wins = db.Column(db.Integer, default=0, nullable=False) # NEW: Win count
+    losses = db.Column(db.Integer, default=0, nullable=False) # NEW: Loss count
 
     def __repr__(self):
         return f'<User {self.username}>'
 
 # Ensure tables are created when the app runs locally
+# NOTE: If you are running this locally and had an old 'users.db', 
+# you may need to delete it or use a migration tool to add the new columns.
 with app.app_context():
     db.create_all()
 
@@ -134,8 +138,8 @@ def fetch_word_from_api(genre):
         "x-rapidapi-host": RAPIDAPI_HOST
     }
     
-    # Construct query to search for words related to the genre
-    search_url = f"{EXTERNAL_WORD_API_URL}search?topics={genre.lower()}&letterPattern=^[a-z]{{5,10}}$&random=true&limit=1"
+    # Removed the restrictive 'letterPattern' from the query to ensure more words are returned.
+    search_url = f"{EXTERNAL_WORD_API_URL}search?topics={genre.lower()}&random=true&limit=1"
     
     try:
         response = requests.get(search_url, headers=headers, timeout=5)
@@ -147,12 +151,12 @@ def fetch_word_from_api(genre):
             if 'word' in word_candidate:
                 return word_candidate['word'].upper()
         
-        print(f"API returned no valid word for genre: {genre}. Falling back.")
-        return "PYTHON" 
+        print(f"API returned no valid word for genre: {genre}. Falling back to PYTHON.")
+        return "PYTHON"  # Fallback 1: API returned no results
         
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching word from API: {e}. Falling back to default.")
-        return "GEMINI" 
+        print(f"Error fetching word from API: {e}. Falling back to GEMINI.")
+        return "GEMINI" # Fallback 2: API call failed
 
 
 def get_display_word(word, guessed_letters):
@@ -201,6 +205,7 @@ def register():
     if user_exists:
         return render_template('register.html', error="Username already exists. Please choose another.")
 
+    # New user starts with 0 wins and 0 losses (handled by model defaults)
     new_user = User(username=username, password=password)
     try:
         db.session.add(new_user)
@@ -257,8 +262,7 @@ def index():
     word_to_guess = session.get('word')
     guessed_letters = session.get('guessed_letters', [])
     
-    # FIX: Ensure lives always has a default integer value (MAX_LIVES) if not in session, 
-    # preventing the TypeError when checking is_loss.
+    # Ensure lives always has a default integer value (MAX_LIVES) if not in session, 
     lives = session.get('lives', MAX_LIVES) 
     
     current_genre = session.get('genre', GENRE_LIST[0])
@@ -304,8 +308,8 @@ def index():
         # Convert the set back to a list before saving to the session
         session['guessed_letters'] = list(guessed_set)
 
-        # Re-fetch updated lives state after POST (if it changed)
-        lives = session.get('lives')
+        # Re-fetch updated lives state after POST, ensuring a default is provided.
+        lives = session.get('lives', MAX_LIVES)
     
     # 2. Update display word and check for Win/Loss state
     display_word = get_display_word(word_to_guess, guessed_set)
@@ -314,16 +318,40 @@ def index():
     
     message = session.get('message', "")
     
-    if is_win:
+    # Track if the game just ended this turn
+    game_just_ended = False
+
+    if is_win and not is_game_over:
+        game_just_ended = True
         is_game_over = True
         session['is_game_over'] = True
         message = f"🎉 YOU WON! The word was **{word_to_guess}**."
-    elif is_loss:
+    elif is_loss and not is_game_over:
+        game_just_ended = True
         is_game_over = True
         session['is_game_over'] = True
         message = f"💀 GAME OVER. The word was **{word_to_guess}**."
 
-    # 3. Render the template with the current state
+    # 2.1 NEW: Update Win/Loss Record if game just ended
+    if game_just_ended and username:
+        user = User.query.filter_by(username=username).first()
+        if user:
+            if is_win:
+                user.wins += 1
+            elif is_loss:
+                user.losses += 1
+            db.session.commit()
+            print(f"Record updated for {username}: Wins={user.wins}, Losses={user.losses}")
+
+    # 3. NEW: Fetch current user record for display
+    user_record = {'wins': 0, 'losses': 0}
+    if username:
+        user = User.query.filter_by(username=username).first()
+        if user:
+            user_record['wins'] = user.wins
+            user_record['losses'] = user.losses
+            
+    # 4. Render the template with the current state
     lives_index = MAX_LIVES - lives
     
     return render_template(
@@ -337,7 +365,8 @@ def index():
         max_lives=MAX_LIVES,
         genres=GENRE_LIST, 
         current_genre=session.get('genre'),
-        username=username
+        username=username,
+        user_record=user_record # NEW variable passed to template
     )
 
 @app.route('/restart')
