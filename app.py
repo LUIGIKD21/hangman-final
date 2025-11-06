@@ -38,18 +38,22 @@ with app.app_context():
     db.create_all()
 
 
-# --- API CONFIGURATION ---
-# REMOVED: RAPIDAPI_KEY and RAPIDAPI_HOST since the new API doesn't need a key.
-# We are switching to the Random Word API, which is often more reliable for simple words.
-EXTERNAL_WORD_API_URL = "https://random-word-api.herokuapp.com/word?number=1" 
+# --- WORD LISTS (Internal Data Source) ---
+# We will now rely on this internal dictionary to provide genre-specific words.
+WORD_LISTS = {
+    "Food": ["CHEESE", "SUSHI", "LEMON", "CARROT", "BANANA", "CHOCOLATE", "BURGER", "PASTA"],
+    "Sports": ["SOCCER", "BASKETBALL", "FOOTBALL", "TENNIS", "HOCKEY", "OLYMPICS", "SWIMMING", "GOLF"],
+    "Science": ["PROTON", "ORBIT", "GENETICS", "ASTRONOMY", "PHYSICS", "CHEMICAL", "NEURON", "WAVE"],
+    "Geography": ["CANADA", "RIVER", "MOUNTAIN", "DESERT", "OCEAN", "TUNDRA", "ISLAND", "VOLCANO"],
+    "Animals": ["ELEPHANT", "TIGER", "DOLPHIN", "SNAKE", "EAGLE", "RHINO", "GIRAFFE", "ZEBRA"]
+}
 
-# Hardcoded GENRE LIST: These are now primarily for display and local fallback.
-GENRE_LIST = [
-    "Food", 
-    "Sports", 
-    "Science",
-    "Geography"
-]
+# The GENRE_LIST is derived from the keys of the WORD_LISTS
+GENRE_LIST = list(WORD_LISTS.keys())
+
+# --- DATAMUSE API CONFIGURATION (Used for Hints) ---
+DATAMUSE_API_URL = "https://api.datamuse.com/words"
+
 
 # Simplified ASCII art for the Hangman stages (0 to 6 misses)
 HANGMAN_STAGES = [
@@ -121,51 +125,74 @@ HANGMAN_STAGES = [
 
 # --- Utility Functions ---
 
-def fetch_word_from_api(genre, max_retries=3):
+def get_hint_from_api(word):
     """
-    Fetches a single random word from the Random Word API.
-    The 'genre' is used only for selecting a specific fallback word if the API fails.
+    Fetches a word related to the current secret word using the Datamuse API.
+    We look for words 'triggered by' the secret word (rel_trg) or synonyms (rel_syn).
+    The response must be a single, clean, unused word.
     """
-    
-    # Fallback words, now organized by genre for context if the API fails
-    fallback_words = {
-        "Food": ["CHEESE", "SUSHI", "LEMON", "CARROT"],
-        "Sports": ["SOCCER", "BASKETBALL", "FOOTBALL", "TENNIS", "HOCKEY"],
-        "Science": ["PROTON", "ORBIT", "GENETICS", "ASTRONOMY"],
-        "Geography": ["CANADA", "RIVER", "MOUNTAIN", "DESERT"]
-    }
-    
-    # Select a relevant fallback word if all else fails
-    fallback_word = random.choice(fallback_words.get(genre, ["PYTHON"]))
+    try:
+        # Request words that are 'triggered by' the secret word, which often returns related concepts
+        params = {
+            'rel_trg': word.lower(),
+            'max': 10  # Get up to 10 results
+        }
+        response = requests.get(DATAMUSE_API_URL, params=params, timeout=3)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Filter for a single, clean word (no spaces, no special characters, not the original word)
+        clean_words = [
+            item['word'].upper() 
+            for item in data 
+            if item['word'].isalpha() and 
+               ' ' not in item['word'] and 
+               item['word'].upper() != word.upper()
+        ]
+        
+        # If we have clean words, return a random one
+        if clean_words:
+            return random.choice(clean_words)
+        
+        # FALLBACK 1: Try for a synonym if no related words were clean
+        params = {
+            'rel_syn': word.lower(),
+            'max': 5
+        }
+        response = requests.get(DATAMUSE_API_URL, params=params, timeout=3)
+        response.raise_for_status()
+        data = response.json()
 
-    for attempt in range(max_retries):
-        try:
-            # We are requesting 1 random word
-            response = requests.get(EXTERNAL_WORD_API_URL, timeout=5)
-            response.raise_for_status() 
-            data = response.json()
-            
-            # The Random Word API returns a list containing one word, e.g., ['apple']
-            if data and isinstance(data, list) and len(data) > 0:
-                word_candidate = data[0]
-                
-                # Check if the word is valid (alphabetic and not empty)
-                if word_candidate and word_candidate.isalpha():
-                    return word_candidate.upper()
-                
-                print(f"Attempt {attempt + 1}: API returned invalid word '{word_candidate}'. Retrying...")
-                continue
-            
-            # If the API returns an unexpected structure, break and use fallback
-            break
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Attempt {attempt + 1}: Error fetching word from API: {e}. Retrying...")
-            continue
+        clean_synonyms = [
+            item['word'].upper() 
+            for item in data 
+            if item['word'].isalpha() and 
+               ' ' not in item['word'] and 
+               item['word'].upper() != word.upper()
+        ]
+        
+        if clean_synonyms:
+            return random.choice(clean_synonyms)
 
-    # Final Fallback if all retries fail
-    print(f"All {max_retries} API attempts failed. Falling back to {fallback_word}.")
-    return fallback_word
+        return None # No useful hint found
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching hint from Datamuse API: {e}")
+        return None
+
+def select_word_by_genre(genre):
+    """
+    Selects a random word from the internal list based on the given genre.
+    This replaces the external API call entirely for reliability.
+    """
+    word_list = WORD_LISTS.get(genre)
+    
+    if word_list:
+        return random.choice(word_list)
+    else:
+        # Fallback to a random word from all lists or a default if genre is unknown
+        all_words = [word for sublist in WORD_LISTS.values() for word in sublist]
+        return random.choice(all_words) if all_words else "HANGMAN"
 
 
 def get_display_word(word, guessed_letters):
@@ -181,19 +208,18 @@ def get_display_word(word, guessed_letters):
 
 def initialize_game(genre):
     """Initializes a new game session."""
-    word = fetch_word_from_api(genre)
+    # Now using the reliable internal function
+    word = select_word_by_genre(genre)
     session['word'] = word
     session['guessed_letters'] = []
     session['lives'] = MAX_LIVES
-    session['message'] = "Start guessing letters!"
+    session['message'] = f"New game in **{genre}** started! Start guessing."
     session['genre'] = genre
     session['is_game_over'] = False
+    session['hint'] = None # Reset hint
+    session['hint_used'] = False # New state to prevent hint spamming
     
-    if not word.isalpha():
-        # Safety check if the fallback word itself was invalid (unlikely)
-        return initialize_game(genre) 
-    
-    print(f"New game started with word: {word}") 
+    print(f"New game started in genre '{genre}' with word: {word}") 
     return word
 
 # --- Authentication Routes ---
@@ -258,7 +284,41 @@ def login():
 def logout():
     """Handles user logout."""
     session.pop('username', None)
+    session.pop('genre', None) # Clear genre preference on logout
+    session.pop('word', None) # Force new game on next visit
     session['message'] = "You have been logged out."
+    return redirect(url_for('index'))
+
+# --- New Hint Route ---
+@app.route('/hint', methods=['POST'])
+def get_hint():
+    """
+    Handles the request for a hint.
+    Costs the player 1 life and fetches a related word.
+    """
+    if session.get('is_game_over') or session.get('lives', 0) <= 0:
+        session['message'] = "The game is over! Cannot use a hint."
+        return redirect(url_for('index'))
+
+    if session.get('hint_used'):
+        session['message'] = "You have already used your one hint per game."
+        return redirect(url_for('index'))
+        
+    word_to_guess = session.get('word')
+
+    if word_to_guess:
+        hint_word = get_hint_from_api(word_to_guess)
+        
+        # Deduct a life for using the hint
+        session['lives'] = session.get('lives', MAX_LIVES) - 1
+        session['hint_used'] = True 
+        
+        if hint_word:
+            session['hint'] = hint_word
+            session['message'] = f"💡 **Hint used!** (1 life lost) A related word is: **{hint_word}**"
+        else:
+            session['message'] = "💡 **Hint used!** (1 life lost) Sorry, the API couldn't find a good hint this time."
+
     return redirect(url_for('index'))
 
 
@@ -299,7 +359,7 @@ def index():
     # 1.2 Handle Letter Guess (POST from guess form)
     elif request.method == 'POST' and 'letter' in request.form and not is_game_over:
         letter = request.form['letter'].upper()
-        session['message'] = "" # Clear previous message
+        # session['message'] = "" # Let the hint message persist unless a new message is generated
 
         if len(letter) == 1 and letter.isalpha():
             if letter in guessed_set:
@@ -326,6 +386,8 @@ def index():
     is_loss = lives <= 0
     
     message = session.get('message', "")
+    current_hint = session.get('hint')
+    hint_used = session.get('hint_used', False)
     
     # Track if the game just ended this turn
     game_just_ended = False
@@ -341,7 +403,7 @@ def index():
         session['is_game_over'] = True
         message = f"💀 GAME OVER. The word was **{word_to_guess}**."
 
-    # 2.1 NEW: Update Win/Loss Record if game just ended
+    # 2.1 Update Win/Loss Record if game just ended
     if game_just_ended and username:
         user = User.query.filter_by(username=username).first()
         if user:
@@ -352,7 +414,7 @@ def index():
             db.session.commit()
             print(f"Record updated for {username}: Wins={user.wins}, Losses={user.losses}")
 
-    # 3. NEW: Fetch current user record for display
+    # 3. Fetch current user record for display
     user_record = {'wins': 0, 'losses': 0}
     if username:
         user = User.query.filter_by(username=username).first()
@@ -375,7 +437,9 @@ def index():
         genres=GENRE_LIST, 
         current_genre=session.get('genre'),
         username=username,
-        user_record=user_record # NEW variable passed to template
+        user_record=user_record,
+        current_hint=current_hint, # NEW
+        hint_used=hint_used # NEW
     )
 
 @app.route('/restart')
@@ -388,6 +452,8 @@ def restart():
     session.pop('guessed_letters', None)
     session.pop('lives', None)
     session.pop('is_game_over', None)
+    session.pop('hint', None) # Clear hint on restart
+    session.pop('hint_used', None) # Clear hint flag on restart
     
     if current_genre:
         session['genre'] = current_genre
@@ -397,5 +463,5 @@ def restart():
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    # Removed API key check since the new API doesn't require one
+    # No external API key needed anymore
     app.run(debug=True)

@@ -44,6 +44,7 @@
         <div id="message" class="w-full max-w-lg mb-6 p-4 rounded-xl text-center shadow-lg 
             {% if 'WON' in message %} bg-green-100 text-green-700 border-2 border-green-400
             {% elif 'OVER' in message %} bg-red-100 text-red-700 border-2 border-red-400
+            {% elif 'Hint' in message %} bg-purple-100 text-purple-700 border-2 border-purple-400
             {% else %} bg-blue-100 text-blue-700 border border-blue-300
             {% endif %}">
             <p class="font-semibold">{{ message | safe }}</p>
@@ -60,7 +61,7 @@
             <!-- Game Details (Right/Bottom) -->
             <div class="w-full md:w-1/2 mt-6 md:mt-0 space-y-4">
 
-                <!-- NEW: User Record Display -->
+                <!-- User Record Display -->
                 {% if username %}
                 <div class="p-3 bg-gray-50 rounded-lg border border-gray-200 shadow-inner">
                     <p class="text-sm font-bold text-gray-700">Record ({{ username }}):</p>
@@ -70,7 +71,6 @@
                     </div>
                 </div>
                 {% endif %}
-                <!-- END NEW: User Record Display -->
                 
                 <p id="lives" class="text-lg font-bold text-gray-700">
                     Lives Remaining: <span class="text-red-500">{{ lives }}/{{ max_lives }}</span>
@@ -80,6 +80,15 @@
                     Guessed Letters: 
                     <span class="font-mono text-gray-800">{{ ', '.join(guessed_letters) if guessed_letters else 'None' }}</span>
                 </p>
+                
+                <!-- NEW: Hint Display -->
+                {% if current_hint %}
+                <div class="p-3 bg-yellow-50 rounded-lg border border-yellow-300">
+                    <p class="text-sm font-bold text-yellow-700">Active Hint:</p>
+                    <p class="text-xl font-mono text-yellow-800">{{ current_hint }}</p>
+                </div>
+                {% endif %}
+                <!-- END NEW: Hint Display -->
                 
                 <!-- Genre Selector -->
                 <div id="genre-selector" class="mt-4">
@@ -103,9 +112,10 @@
         <!-- Current Word Display -->
         <h2 class="text-4xl md:text-5xl font-extrabold tracking-widest text-gray-900 mb-8 p-4 bg-yellow-100 rounded-xl shadow-inner">{{ display_word }}</h2>
 
-        <!-- Guess Form / Restart Button -->
-        <div class="w-full max-w-sm">
+        <!-- Guess Form / Restart Button / Hint Button -->
+        <div class="w-full max-w-sm flex flex-col space-y-4">
             {% if not is_game_over %}
+                <!-- Letter Guess Form -->
                 <form method="POST" action="/" class="flex space-x-2">
                     <input type="text" id="letter" name="letter" maxlength="1" required autofocus
                            class="flex-grow p-3 text-2xl text-center border-2 border-indigo-300 rounded-lg shadow-md focus:ring-indigo-500 focus:border-indigo-500 uppercase"
@@ -115,7 +125,24 @@
                         Guess
                     </button>
                 </form>
+
+                <!-- Hint Button -->
+                {% if not hint_used and lives > 1 %}
+                <form method="POST" action="{{ url_for('get_hint') }}" class="w-full">
+                    <button type="submit"
+                            class="w-full p-3 bg-purple-600 text-white rounded-lg font-semibold shadow-md hover:bg-purple-700 transition transform hover:scale-[1.02]">
+                        Get Hint (Cost: 1 Life)
+                    </button>
+                </form>
+                {% elif not is_game_over and lives <= 1 %}
+                <button type="button" disabled
+                        class="w-full p-3 bg-gray-400 text-gray-200 rounded-lg font-semibold shadow-md cursor-not-allowed">
+                    Need >1 Life for Hint
+                </button>
+                {% endif %}
+
             {% else %}
+                <!-- Play Again Button -->
                 <a href="{{ url_for('restart') }}" 
                    class="w-full block text-center p-3 bg-green-600 text-white rounded-lg font-semibold shadow-xl hover:bg-green-700 transition transform hover:scale-[1.02]">
                     Play Again (Genre: {{ current_genre }})
